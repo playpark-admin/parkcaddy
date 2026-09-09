@@ -262,8 +262,9 @@ let viewMode = 'grid', zone = 'putting';
 let sensitivity = 1.0, eyeH = 130, rangeIdx = 2;
 let isFrozen = false, facingMode = 'environment';
 
-// 공 마커
-let bx = 0.5, by = 0.45, isDrag = false;
+// 공 마커 (3D 지면 고정 좌표 및 정규화 좌표)
+let ball3X = 0, ball3Z = -2.0;
+let bx = 0.5, by = 0.5, isDrag = false;
 
 // 자이로
 let rawP = 45, rawR = 0, fP = 45, fR = 0;
@@ -304,9 +305,10 @@ const cMat = new THREE.ShaderMaterial({
 });
 
 let geo, gM, nP, hM, cM;
+let ball3DMesh, ring3DMesh;
 
 function buildMesh(){
-  [gM,nP,hM,cM].forEach(m=>m&&scene.remove(m));
+  [gM,nP,hM,cM,ball3DMesh,ring3DMesh].forEach(m=>m&&scene.remove(m));
   geo = new THREE.PlaneGeometry(5.5, 5.5, DN, DN);
   geo.rotateX(-Math.PI/2); geo.translate(0,0,-2.0);
   gM = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({color:0x00f0ff,wireframe:true,transparent:true,opacity:.75,fog:true}));
@@ -318,19 +320,73 @@ function buildMesh(){
   hM.visible=(viewMode==='heatmap'); scene.add(hM);
   cM = new THREE.Mesh(geo, cMat);
   cM.visible=(viewMode==='contour'); scene.add(cM);
+
+  // 3D 골프공 모델
+  const bGeo = new THREE.SphereGeometry(0.12, 16, 16);
+  const bMat = new THREE.MeshStandardMaterial({color:0xffffff, roughness:0.25, metalness:0.05});
+  ball3DMesh = new THREE.Mesh(bGeo, bMat);
+  ball3DMesh.position.set(ball3X, 0.12, ball3Z);
+  scene.add(ball3DMesh);
+
+  // 3D 지면 타겟 링
+  const rGeo = new THREE.RingGeometry(0.18, 0.28, 32);
+  rGeo.rotateX(-Math.PI/2);
+  const rMat = new THREE.MeshBasicMaterial({color:0x00f0ff, side:THREE.DoubleSide, transparent:true, opacity:0.85});
+  ring3DMesh = new THREE.Mesh(rGeo, rMat);
+  ring3DMesh.position.set(ball3X, 0.02, ball3Z);
+  scene.add(ring3DMesh);
 }
 
-// ── 공 마커 드래그 ────────────────────────────────────────────────────────
-ballEl.addEventListener('pointerdown',()=>{isDrag=true;ballEl.classList.add('drag');});
-window.addEventListener('pointermove',e=>{
-  if(!isDrag) return;
-  const cx=e.touches?e.touches[0].clientX:e.clientX;
-  const cy=e.touches?e.touches[0].clientY:e.clientY;
-  bx=Math.max(.08,Math.min(.92,cx/innerWidth));
-  by=Math.max(.15,Math.min(.72,cy/innerHeight));
-  ballEl.style.left=`${bx*100}%`; ballEl.style.top=`${by*100}%`;
+// ── 공 마커 3D 지면 레이캐스팅 & 드래그 ──────────────────────────────────
+const raycaster = new THREE.Raycaster();
+const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+const rayHit = new THREE.Vector3();
+
+function setBallFromScreen(cx, cy) {
+  const mouse = new THREE.Vector2((cx / innerWidth) * 2 - 1, -(cy / innerHeight) * 2 + 1);
+  raycaster.setFromCamera(mouse, cam3);
+  if (raycaster.ray.intersectPlane(groundPlane, rayHit)) {
+    ball3X = Math.max(-2.5, Math.min(2.5, rayHit.x));
+    ball3Z = Math.max(-4.5, Math.min(0.5, rayHit.z));
+    bx = (ball3X + 2.75) / 5.5;
+    by = (ball3Z + 4.75) / 5.5;
+    if (ball3DMesh) ball3DMesh.position.set(ball3X, 0.12, ball3Z);
+    if (ring3DMesh) ring3DMesh.position.set(ball3X, 0.02, ball3Z);
+    computeHeights();
+  }
+}
+
+ballEl.addEventListener('pointerdown', e => {
+  isDrag = true;
+  ballEl.classList.add('drag');
 });
-window.addEventListener('pointerup',()=>{isDrag=false;ballEl.classList.remove('drag');});
+
+window.addEventListener('pointermove', e => {
+  if (!isDrag) return;
+  const cx = e.touches ? e.touches[0].clientX : e.clientX;
+  const cy = e.touches ? e.touches[0].clientY : e.clientY;
+  setBallFromScreen(cx, cy);
+});
+
+window.addEventListener('pointerup', () => {
+  if (isDrag) {
+    isDrag = false;
+    ballEl.classList.remove('drag');
+  }
+});
+
+// 3D 공 위치를 2D 화면 마커 좌표로 투영 (지면 고정)
+function updateBallMarkerScreenPos() {
+  const v = new THREE.Vector3(ball3X, 0.08, ball3Z);
+  v.project(cam3);
+  if (v.z < 1) {
+    const sx = v.x * (innerWidth / 2) + (innerWidth / 2);
+    const sy = -v.y * (innerHeight / 2) + (innerHeight / 2);
+    ballEl.style.left = `${sx}px`;
+    ballEl.style.top = `${sy}px`;
+    ballEl.style.display = (sx >= -60 && sx <= innerWidth + 60 && sy >= -60 && sy <= innerHeight + 60) ? 'flex' : 'none';
+  }
+}
 
 // ── 높이 계산 ─────────────────────────────────────────────────────────────
 function computeHeights(){
@@ -338,6 +394,8 @@ function computeHeights(){
   const dp=(calibP!==null)?(fP-calibP):0;
   const dr=(calibR!==null)?(fR-calibR):0;
   const dpR=dp*Math.PI/180, drR=dr*Math.PI/180;
+  
+  // 지면의 고정된 공 위치(m) 기준 높이 산출
   const bGx=(bx-.5)*z.w, bGz=(by-.5)*z.d;
   const bH=Math.tan(dpR)*bGz+Math.tan(drR)*bGx;
   for(let r=0;r<rows;r++){
@@ -519,9 +577,15 @@ if(window.DeviceOrientationEvent){
 
 // ── 카메라 3D 업데이트 ────────────────────────────────────────────────────
 function updateCam3(){
-  const rp=THREE.MathUtils.degToRad(45), dist=5.0;
-  cam3.position.set(0,Math.sin(rp)*dist+0.6,Math.cos(rp)*dist);
-  cam3.lookAt(0,0,-2.0);
+  const pitchRad = THREE.MathUtils.degToRad(fP || 45);
+  const rollRad = THREE.MathUtils.degToRad(fR || 0);
+  const dist = 5.0;
+  const cy = Math.sin(pitchRad) * dist + (eyeH / 100 - 1.3);
+  const cz = Math.cos(pitchRad) * dist - 2.0;
+  const cx = Math.sin(rollRad) * 1.5;
+  cam3.position.set(cx, Math.max(0.8, cy), cz);
+  cam3.lookAt(0, 0, -2.0);
+  cam3.rotation.z = -rollRad;
 }
 
 // ── 라벨 ──────────────────────────────────────────────────────────────────
@@ -549,9 +613,7 @@ function updateLabels(){
       }
     }
   }
-  const rc=Math.round(by*DN), cc2=Math.round(bx*DN);
-  const bh=Math.round((heightsM[Math.min(rc,DN)][Math.min(cc2,DN)]||0)*100);
-  bTip.textContent=`⚪ 공 위치 (${bh>0?'+':''}${bh}cm)`;
+  bTip.textContent='⚪ 공 위치 (기준 0.0 cm)';
 }
 
 // ── 데모 ──────────────────────────────────────────────────────────────────
@@ -702,7 +764,9 @@ buildMesh(); updateUI(); startSim();
 function loop(){
   fP+=ALPHA*(rawP-fP); fR+=ALPHA*(rawR-fR);
   if(!isFrozen) computeHeights();
-  updateCam3(); updateLabels();
+  updateCam3();
+  updateBallMarkerScreenPos();
+  updateLabels();
   renderer.render(scene,cam3);
   requestAnimationFrame(loop);
 }
