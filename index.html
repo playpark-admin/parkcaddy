@@ -593,20 +593,47 @@ function startSim(){
 
 // ── 카메라 ────────────────────────────────────────────────────────────────
 async function startCamera(){
-  if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function'){
-    try{await DeviceOrientationEvent.requestPermission();}catch(e){}
+  permEl.style.display = 'none'; // 배너 감추기
+  if(typeof DeviceOrientationEvent!=='undefined' && typeof DeviceOrientationEvent.requestPermission==='function'){
+    try{
+      const perm = await DeviceOrientationEvent.requestPermission();
+      if(perm !== 'granted') {
+        alert('자이로/모션 센서 권한이 거부되었습니다. 브라우저 설정에서 권한을 확인해주세요.');
+      }
+    }catch(e){
+      console.warn('센서 권한 요청 오류:', e);
+    }
   }
-  if(!navigator.mediaDevices?.getUserMedia){startSim();return;}
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    alert('이 브라우저는 카메라 API를 지원하지 않거나 HTTPS 보안 연결이 아닙니다. (데모 모드로 전환합니다)');
+    startSim();
+    return;
+  }
   const list=[
     {video:{facingMode:{ideal:facingMode},width:{ideal:1280},height:{ideal:720}}},
-    {video:{facingMode:facingMode}},{video:true}
+    {video:{facingMode:facingMode}},
+    {video:true}
   ];
-  let s=null;
+  let s=null, lastErr=null;
   for(const c of list){
-    try{if(stream)stream.getTracks().forEach(t=>t.stop());s=await navigator.mediaDevices.getUserMedia(c);if(s)break;}
-    catch(e){console.warn(e.name);}
+    try{
+      if(stream) stream.getTracks().forEach(t=>t.stop());
+      s=await navigator.mediaDevices.getUserMedia(c);
+      if(s) break;
+    } catch(e){
+      lastErr = e;
+      console.warn('카메라 옵션 실패:', e.name);
+    }
   }
-  if(!s){startSim();return;}
+  if(!s){
+    if(lastErr && (lastErr.name === 'NotAllowedError' || lastErr.name === 'PermissionDeniedError')){
+      alert('카메라 권한이 거부되었습니다. 스마트폰 설정에서 카메라 권한을 허용해 주세요.');
+    } else {
+      alert('카메라 연결에 실패했습니다: ' + (lastErr ? lastErr.name : '알 수 없는 오류'));
+    }
+    startSim();
+    return;
+  }
   stream=s;
   const onReady=async()=>{
     isSim=false; snapEl.classList.add('hidden'); camEl.style.display='block'; permEl.style.display='none';
