@@ -696,8 +696,6 @@ document.getElementById('bh+').onclick=()=>{eyeH=Math.min(200,eyeH+10);document.
 document.getElementById('br-').onclick=()=>{rangeIdx=Math.max(0,rangeIdx-1);document.getElementById('v-r').textContent=RANGE_LABELS[rangeIdx];};
 document.getElementById('br+').onclick=()=>{rangeIdx=Math.min(4,rangeIdx+1);document.getElementById('v-r').textContent=RANGE_LABELS[rangeIdx];};
 
-const RANGE_LABELS=['±5cm','±10cm','±15cm','±30cm','±50cm'];
-
 // ── 초기화 & 루프 ─────────────────────────────────────────────────────────
 buildMesh(); updateUI(); startSim();
 
