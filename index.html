@@ -232,9 +232,8 @@
   </main>
 </div>
 
-<script type="module">
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js';
-
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
 // ── 상수 ──────────────────────────────────────────────────────────────────
 const ZONE = { tee:{d:80,w:60}, approach:{d:40,w:30}, putting:{d:8,w:6} };
 const EXAG = 6.0, ALPHA = 0.15, DN = 20;
@@ -256,14 +255,6 @@ const btnMeas = document.getElementById('btn-meas');
 const statusBar = document.getElementById('status-bar');
 
 // ── 상태 ──────────────────────────────────────────────────────────────────
-/*
-  measState:
-    'step1_idle'     → 1단계: 평지에서 기준 측정 대기
-    'step1_meas'     → 1단계 측정 중 (3초)
-    'step2_idle'     → 2단계: 측정할 위치로 이동, 라이브
-    'step2_meas'     → 2단계 측정 중 (3초)
-    'frozen'         → 측정 완료, 화면 고정
-*/
 let measState = 'step1_idle';
 
 let isSim = true, stream = null;
