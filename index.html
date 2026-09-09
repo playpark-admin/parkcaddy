@@ -118,9 +118,9 @@
     .instr{background:linear-gradient(90deg,rgba(0,240,255,.1),rgba(16,185,129,.1));border:1px solid rgba(0,240,255,.2);border-radius:8px;padding:5px 10px;font-size:.66rem;font-weight:600;color:#E0F2FE;display:flex;align-items:flex-start;gap:5px;line-height:1.4;}
 
     /* 카메라 권한 */
-    .cb{position:absolute;top:80px;left:50%;transform:translateX(-50%);z-index:50;width:88%;max-width:320px;}
-    .cc{background:rgba(13,17,26,.95);backdrop-filter:blur(20px);border:1.5px solid var(--n);border-radius:16px;padding:14px;text-align:center;display:flex;flex-direction:column;gap:8px;box-shadow:0 10px 30px rgba(0,0,0,.8);}
-    .btn-perm{padding:12px;background:linear-gradient(135deg,var(--g),var(--n));color:#000;font-weight:800;border:none;border-radius:10px;cursor:pointer;font-size:.9rem;}
+    .cb{position:absolute;top:80px;left:50%;transform:translateX(-50%);z-index:1000;width:88%;max-width:320px;pointer-events:auto;}
+    .cc{background:rgba(13,17,26,.95);backdrop-filter:blur(20px);border:1.5px solid var(--n);border-radius:16px;padding:14px;text-align:center;display:flex;flex-direction:column;gap:8px;box-shadow:0 10px 30px rgba(0,0,0,.8);pointer-events:auto;}
+    .btn-perm{padding:12px;background:linear-gradient(135deg,var(--g),var(--n));color:#000;font-weight:800;border:none;border-radius:10px;cursor:pointer;font-size:.9rem;pointer-events:auto;}
   </style>
 </head>
 <body>
@@ -143,7 +143,7 @@
     <div class="cc">
       <h3>📷 모바일 카메라 연동</h3>
       <p style="font-size:.72rem;color:#9CA3AF;">카메라로 지면을 비추어 3D 지형을 측정합니다.</p>
-      <button id="btn-cam" class="btn-perm">📷 카메라 및 센서 켜기</button>
+      <button id="btn-cam" class="btn-perm" onclick="window.startCameraGlobal && window.startCameraGlobal()">📷 카메라 및 센서 켜기</button>
     </div>
   </div>
 
@@ -586,55 +586,83 @@ function startSim(){
 }
 
 // ── 카메라 ────────────────────────────────────────────────────────────────
-async function startCamera(){
-  permEl.style.display = 'none';
-  if(typeof DeviceOrientationEvent!=='undefined' && typeof DeviceOrientationEvent.requestPermission==='function'){
+window.startCameraGlobal = async function(){
+  const btn = document.getElementById('btn-cam');
+  if(btn){
+    btn.disabled = true;
+    btn.textContent = '⏳ 카메라 요청 중...';
+  }
+
+  // 1. iOS 모션 센서 권한
+  if(typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function'){
     try{
       await DeviceOrientationEvent.requestPermission();
     }catch(e){
-      console.warn('센서 권한 요청 오류:', e);
+      console.warn('센서 권한:', e);
     }
   }
+
+  // 2. getUserMedia 지원 확인
   if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
-    alert('이 브라우저는 카메라 API를 지원하지 않거나 HTTPS 보안 연결이 아닙니다.');
+    alert('이 브라우저는 카메라(getUserMedia)를 지원하지 않거나 HTTPS 보안 연결이 아닙니다.');
+    if(btn){ btn.disabled = false; btn.textContent = '📷 카메라 및 센서 켜기'; }
+    permEl.style.display = 'none';
     startSim();
     return;
   }
-  const list=[
-    {video:{facingMode:{ideal:facingMode}}},
-    {video:{facingMode:facingMode}},
-    {video:true}
+
+  // 3. 카메라 스트림 획득
+  const options = [
+    { video: { facingMode: { ideal: facingMode } } },
+    { video: { facingMode: facingMode } },
+    { video: { facingMode: 'environment' } },
+    { video: true }
   ];
-  let s=null, lastErr=null;
-  for(const c of list){
-    try{
-      if(stream) stream.getTracks().forEach(t=>t.stop());
-      s=await navigator.mediaDevices.getUserMedia(c);
+
+  let s = null, lastErr = null;
+  for(const opt of options){
+    try {
+      if(stream) stream.getTracks().forEach(t => t.stop());
+      s = await navigator.mediaDevices.getUserMedia(opt);
       if(s) break;
-    } catch(e){
+    } catch(e) {
       lastErr = e;
-      console.warn('카메라 옵션 실패:', e.name);
+      console.warn('카메라 시도:', e);
     }
   }
+
   if(!s){
-    if(lastErr && (lastErr.name === 'NotAllowedError' || lastErr.name === 'PermissionDeniedError')){
-      alert('카메라 권한이 거부되었습니다. 스마트폰 브라우저 설정에서 카메라 권한을 허용해 주세요.');
-    } else {
-      alert('카메라 연결 실패: ' + (lastErr ? lastErr.name : '오류'));
+    let msg = '카메라 연결에 실패했습니다.';
+    if(lastErr){
+      if(lastErr.name === 'NotAllowedError' || lastErr.name === 'PermissionDeniedError'){
+        msg = '카메라 권한이 거부되어 있습니다.\n브라우저 주소창 왼쪽의 자물쇠/설정 아이콘을 눌러 카메라 권한을 [허용]으로 변경 후 새로고침해 주세요.';
+      } else {
+        msg = '카메라 오류: ' + (lastErr.message || lastErr.name);
+      }
     }
+    alert(msg);
+    if(btn){ btn.disabled = false; btn.textContent = '📷 카메라 및 센서 켜기'; }
+    permEl.style.display = 'none';
     startSim();
     return;
   }
-  stream=s;
-  isSim=false;
+
+  stream = s;
+  isSim = false;
   snapEl.classList.add('hidden');
-  camEl.srcObject=stream;
-  try{
+  permEl.style.display = 'none';
+  camEl.muted = true;
+  camEl.playsInline = true;
+  camEl.srcObject = stream;
+  try {
     await camEl.play();
-  }catch(e){
-    setTimeout(()=>camEl.play().catch(()=>{}),100);
+  } catch(e) {
+    console.warn('play retry:', e);
+    setTimeout(() => camEl.play().catch(() => {}), 150);
   }
-}
+};
+
+const startCamera = window.startCameraGlobal;
 
 // ── 이벤트 ────────────────────────────────────────────────────────────────
 document.getElementById('btn-cam').onclick=startCamera;
