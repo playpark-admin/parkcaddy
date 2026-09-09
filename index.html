@@ -125,7 +125,7 @@
 </head>
 <body>
 <div id="app">
-  <video id="cam" autoplay playsinline muted></video>
+  <video id="cam" autoplay playsinline webkit-playsinline muted></video>
   <canvas id="snap" class="hidden"></canvas>
   <canvas id="ar"></canvas>
   <div id="lbl"></div>
@@ -396,13 +396,12 @@ function freezeFrame(){
     const s=Math.max(innerWidth/vw, innerHeight/vh);
     ctx.drawImage(camEl,(innerWidth-vw*s)/2,(innerHeight-vh*s)/2,vw*s,vh*s);
     snapEl.classList.remove('hidden');
-    camEl.style.display='none';
   }
   isFrozen=true;
 }
 
 function unfreezeFrame(){
-  if(!isSim){ snapEl.classList.add('hidden'); camEl.style.display='block'; }
+  if(!isSim){ snapEl.classList.add('hidden'); }
   isFrozen=false;
 }
 
@@ -497,7 +496,6 @@ btnMeas.addEventListener('click',()=>{
       measState='step1_meas'; updateUI();
       doMeasure(1,(ap,ar)=>{
         calibP=ap; calibR=ar;
-        // 기준 설정 후 → 2단계로
         measState='step2_idle'; updateUI();
       });
       break;
@@ -505,13 +503,9 @@ btnMeas.addEventListener('click',()=>{
     case 'step2_idle':
       measState='step2_meas'; updateUI();
       doMeasure(2,(ap,ar)=>{
-        // 현재 gyro 값으로 고정
-        // fP/fR는 이미 현재 측정 시점 값 (샘플 완료 후)
-        // computeHeights()가 calibP 기준으로 자동 계산
-        // 마지막 샘플 평균을 fP/fR 로 설정해 freeze
         const savedFP=fP, savedFR=fR;
         fP=ap; fR=ar;
-        computeHeights(); // 측정 시점 높이 확정
+        computeHeights();
         fP=savedFP; fR=savedFR;
         freezeFrame();
         measState='frozen'; updateUI();
@@ -519,7 +513,6 @@ btnMeas.addEventListener('click',()=>{
       break;
 
     case 'frozen':
-      // 재측정: 기준은 유지, 2단계부터 재시작
       unfreezeFrame();
       measState='step2_idle'; updateUI();
       break;
@@ -565,7 +558,6 @@ function updateLabels(){
       }
     }
   }
-  // 공 마커 높이 업데이트
   const rc=Math.round(by*DN), cc2=Math.round(bx*DN);
   const bh=Math.round((heightsM[Math.min(rc,DN)][Math.min(cc2,DN)]||0)*100);
   bTip.textContent=`⚪ 공 위치 (${bh>0?'+':''}${bh}cm)`;
@@ -574,10 +566,11 @@ function updateLabels(){
 // ── 데모 ──────────────────────────────────────────────────────────────────
 let simT=0;
 function startSim(){
-  isSim=true; snapEl.classList.remove('hidden'); camEl.style.display='none';
+  isSim=true;
+  snapEl.classList.remove('hidden');
   rawP=47.2; rawR=0.8;
   const ctx=snapEl.getContext('2d');
-  (function draw(){
+  function draw(){
     if(!isSim) return;
     simT+=0.02;
     if(!isFrozen){
@@ -588,29 +581,27 @@ function startSim(){
     ctx.fillStyle='#1E293B'; ctx.fillRect(0,0,w,h*.35);
     ctx.fillStyle='#065F46'; ctx.fillRect(0,h*.35,w,h*.65);
     requestAnimationFrame(draw);
-  })();
+  }
+  draw();
 }
 
 // ── 카메라 ────────────────────────────────────────────────────────────────
 async function startCamera(){
-  permEl.style.display = 'none'; // 배너 감추기
+  permEl.style.display = 'none';
   if(typeof DeviceOrientationEvent!=='undefined' && typeof DeviceOrientationEvent.requestPermission==='function'){
     try{
-      const perm = await DeviceOrientationEvent.requestPermission();
-      if(perm !== 'granted') {
-        alert('자이로/모션 센서 권한이 거부되었습니다. 브라우저 설정에서 권한을 확인해주세요.');
-      }
+      await DeviceOrientationEvent.requestPermission();
     }catch(e){
       console.warn('센서 권한 요청 오류:', e);
     }
   }
   if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
-    alert('이 브라우저는 카메라 API를 지원하지 않거나 HTTPS 보안 연결이 아닙니다. (데모 모드로 전환합니다)');
+    alert('이 브라우저는 카메라 API를 지원하지 않거나 HTTPS 보안 연결이 아닙니다.');
     startSim();
     return;
   }
   const list=[
-    {video:{facingMode:{ideal:facingMode},width:{ideal:1280},height:{ideal:720}}},
+    {video:{facingMode:{ideal:facingMode}}},
     {video:{facingMode:facingMode}},
     {video:true}
   ];
@@ -627,21 +618,22 @@ async function startCamera(){
   }
   if(!s){
     if(lastErr && (lastErr.name === 'NotAllowedError' || lastErr.name === 'PermissionDeniedError')){
-      alert('카메라 권한이 거부되었습니다. 스마트폰 설정에서 카메라 권한을 허용해 주세요.');
+      alert('카메라 권한이 거부되었습니다. 스마트폰 브라우저 설정에서 카메라 권한을 허용해 주세요.');
     } else {
-      alert('카메라 연결에 실패했습니다: ' + (lastErr ? lastErr.name : '알 수 없는 오류'));
+      alert('카메라 연결 실패: ' + (lastErr ? lastErr.name : '오류'));
     }
     startSim();
     return;
   }
   stream=s;
-  const onReady=async()=>{
-    isSim=false; snapEl.classList.add('hidden'); camEl.style.display='block'; permEl.style.display='none';
-    try{await camEl.play();}catch(e){setTimeout(()=>camEl.play().catch(()=>{}),100);}
-  };
-  camEl.addEventListener('loadedmetadata',onReady,{once:true});
+  isSim=false;
+  snapEl.classList.add('hidden');
   camEl.srcObject=stream;
-  if(camEl.readyState>=1){camEl.removeEventListener('loadedmetadata',onReady);onReady();}
+  try{
+    await camEl.play();
+  }catch(e){
+    setTimeout(()=>camEl.play().catch(()=>{}),100);
+  }
 }
 
 // ── 이벤트 ────────────────────────────────────────────────────────────────
