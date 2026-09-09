@@ -23,12 +23,12 @@
     #ar{position:absolute;top:0;left:0;width:100%;height:100%;z-index:2;}
     #lbl{position:absolute;top:0;left:0;width:100%;height:100%;z-index:3;pointer-events:none;}
 
-    .badge{position:absolute;transform:translate(-50%,-50%);font-family:var(--fd);border-radius:8px;backdrop-filter:blur(8px);box-shadow:0 2px 8px rgba(0,0,0,.6);white-space:nowrap;display:flex;flex-direction:column;align-items:center;padding:2px 7px;line-height:1.15;}
+    .badge{position:absolute;transform:translate(-50%,-50%);font-family:var(--fd);border-radius:8px;backdrop-filter:blur(8px);box-shadow:0 2px 8px rgba(0,0,0,.6);white-space:nowrap;display:flex;flex-direction:column;align-items:center;padding:3px 7px;line-height:1.2;}
     .bp{background:rgba(239,68,68,.88);color:#FFF;border:1px solid #FCA5A5;}
     .bn{background:rgba(0,240,255,.88);color:#07090E;border:1px solid #67E8F9;}
     .bz{background:rgba(16,185,129,.88);color:#FFF;border:1px solid #6EE7B7;}
-    .bh{font-size:.74rem;font-weight:800;}
-    .bd{font-size:.56rem;font-weight:700;opacity:.92;margin-top:1px;}
+    .bh{font-size:.74rem;font-weight:800;white-space:nowrap;}
+    .bd{font-size:.62rem;font-weight:700;opacity:.95;margin-top:2px;background:rgba(0,0,0,.25);padding:1px 5px;border-radius:4px;white-space:nowrap;}
 
     #hud{position:absolute;top:0;left:0;width:100%;height:100dvh;z-index:10;pointer-events:none;
          display:flex;flex-direction:column;justify-content:space-between;
@@ -263,6 +263,7 @@ let rawP = 45, rawR = 0, fP = 45, fR = 0;
 
 // 기준 (1단계 측정값)
 let calibP = null, calibR = null;
+let measuredSlopeP = 0, measuredSlopeR = 0;
 
 // 높이 배열
 let heightsM = Array.from({length:DN+1},()=>new Float32Array(DN+1));
@@ -351,6 +352,7 @@ function buildMesh(){
   scene.add(ring3DMesh);
 
   updateDistanceRings();
+  computeHeights();
 }
 
 // ── 공 마커 3D 지면 레이캐스팅 & 드래그 ──────────────────────────────────
@@ -407,21 +409,17 @@ function updateBallMarkerScreenPos() {
 function computeHeights(){
   if(!geo) return;
   const cols = DN + 1, rows = DN + 1;
-  const dp = (calibP !== null) ? (fP - calibP) : 0;
-  const dr = (calibR !== null) ? (fR - calibR) : 0;
-  const dpR = dp * Math.PI / 180;
-  const drR = dr * Math.PI / 180;
-
-  // 공의 지면 3D 위치 기준 높이 산출 (공 위치가 기준 0.0cm)
-  const bH = Math.tan(dpR) * ball3Z + Math.tan(drR) * ball3X;
   const pos = geo.attributes.position;
+  // 기준점(공 위치) 높이: 공 위치에서의 지면 높이 산출
+  const bH = measuredSlopeP * ball3Z + measuredSlopeR * ball3X;
+
   for(let r = 0; r < rows; r++){
     for(let c = 0; c < cols; c++){
       const idx = r * cols + c;
       const gx = pos.getX(idx);
       const gz = pos.getZ(idx);
-      // 공 기준 상대 높이 (미터 단위)
-      heightsM[r][c] = (Math.tan(dpR) * gz + Math.tan(drR) * gx) - bH;
+      // 공 기준 상대 높이 (미터 단위, 평지면 0.00m)
+      heightsM[r][c] = (measuredSlopeP * gz + measuredSlopeR * gx) - bH;
     }
   }
   applyMesh();
@@ -435,7 +433,8 @@ function applyMesh(){
     for(let c=0;c<=DN;c++){
       const idx=r*(DN+1)+c;
       const hm=heightsM[r][c];
-      pos.setY(idx,Math.max(-1.4,Math.min(1.4,hm*sensitivity*EXAG)));
+      // 과도한 왜곡(EXAG=6.0)을 없애고 직관적인 현실 스케일로 적용
+      pos.setY(idx, Math.max(-1.0, Math.min(1.0, hm * sensitivity * 1.5)));
       const hcl=Math.max(-maxM,Math.min(maxM,hm));
       setColor(colors,idx,hcl*100);
     }
@@ -571,10 +570,15 @@ btnMeas.addEventListener('click',()=>{
     case 'step2_idle':
       measState='step2_meas'; updateUI();
       doMeasure(2,(ap,ar)=>{
-        const savedFP=fP, savedFR=fR;
-        fP=ap; fR=ar;
+        // 1단계 기준(calibP, calibR)과의 차이로 실제 지형 경사 산출
+        const dp = (calibP !== null) ? (ap - calibP) : 0;
+        const dr = (calibR !== null) ? (ar - calibR) : 0;
+        // 미세한 손떨림 및 0.8도 미만 오차는 평지(0)로 간주
+        const effDP = Math.abs(dp) < 0.8 ? 0 : dp;
+        const effDR = Math.abs(dr) < 0.8 ? 0 : dr;
+        measuredSlopeP = Math.tan(effDP * Math.PI / 180);
+        measuredSlopeR = Math.tan(effDR * Math.PI / 180);
         computeHeights();
-        fP=savedFP; fR=savedFR;
         freezeFrame();
         measState='frozen'; updateUI();
       });
@@ -582,6 +586,9 @@ btnMeas.addEventListener('click',()=>{
 
     case 'frozen':
       unfreezeFrame();
+      measuredSlopeP = 0;
+      measuredSlopeR = 0;
+      computeHeights();
       measState='step2_idle'; updateUI();
       break;
   }
@@ -596,18 +603,22 @@ if(window.DeviceOrientationEvent){
 
 // ── 카메라 3D 업데이트 ────────────────────────────────────────────────────
 function updateCam3(){
-  const pitchRad = THREE.MathUtils.degToRad(fP || 45);
+  // pitch: 0도=정면, 90도=수직 아래. 기본 폰 각도(beta~45~60도)에 따라 회전
+  const pitchRad = THREE.MathUtils.degToRad(fP || 50);
   const rollRad = THREE.MathUtils.degToRad(fR || 0);
-  const dist = 5.0;
-  const cy = Math.sin(pitchRad) * dist + (eyeH / 100 - 1.3);
-  const cz = Math.cos(pitchRad) * dist - 3.0;
-  const cx = Math.sin(rollRad) * 1.5;
-  cam3.position.set(cx, Math.max(0.8, cy), cz);
-  cam3.lookAt(0, 0, -3.0);
+
+  // 카메라를 사용자의 실제 눈높이/손높이 위치(0, eyeH/100, 0)에 고정
+  const camY = Math.max(0.6, eyeH / 100);
+  cam3.position.set(0, camY, 0);
+
+  // FPS 방식 회전: 고개를 들거나 숙일 때 화면의 3D 지면 그리드가 실제 바닥과 정확히 일치
+  cam3.rotation.order = 'YXZ';
+  cam3.rotation.x = -pitchRad;
   cam3.rotation.z = -rollRad;
+  cam3.rotation.y = 0;
 }
 
-// ── 라벨 (깊이 정보 + 공 기준 거리 정보 표시) ─────────────────────────────
+// ── 라벨 (공 기준 실제 물리적 거리 및 높낮이 표시) ─────────────────────────────
 function updateLabels(){
   lblEl.innerHTML='';
   if(viewMode!=='grid'||!geo) return;
@@ -619,6 +630,7 @@ function updateLabels(){
       const idx=r*(DN+1)+c;
       const gx=pos.getX(idx);
       const gz=pos.getZ(idx);
+      // 공 기준 순수 물리적 수평 거리 (항상 양수: 1.5m, 3.2m 등)
       const distM=Math.hypot(gx-ball3X, gz-ball3Z);
       
       // 공 마커 바로 위와 겹치지 않도록 필터링
@@ -633,13 +645,13 @@ function updateLabels(){
           const d=document.createElement('div');
           d.className=`badge ${hCm>1?'bp':hCm<-1?'bn':'bz'}`;
           d.style.left=`${sx}px`; d.style.top=`${sy}px`;
-          d.innerHTML=`<span class="bh">${hCm>0?'+':''}${hCm}cm</span><span class="bd">${distM.toFixed(1)}m</span>`;
+          d.innerHTML=`<div class="bh">높낮이: ${hCm>0?'+':''}${hCm}cm</div><div class="bd">거리: ${distM.toFixed(1)}m</div>`;
           lblEl.appendChild(d);
         }
       }
     }
   }
-  bTip.textContent='⚪ 공 위치 (0.0cm · 기준점)';
+  bTip.textContent='⚪ 기준점 (0cm · 0.0m)';
 }
 
 // ── 데모 ──────────────────────────────────────────────────────────────────
@@ -768,6 +780,7 @@ document.getElementById('leg-h').onclick=()=>{
 document.getElementById('sl-s').oninput=e=>{
   sensitivity=parseFloat(e.target.value);
   document.getElementById('v-s').textContent=`${sensitivity.toFixed(1)}x`;
+  applyMesh();
 };
 
 // 촬영 높이
@@ -775,15 +788,14 @@ document.getElementById('bh-').onclick=()=>{eyeH=Math.max(80,eyeH-10);document.g
 document.getElementById('bh+').onclick=()=>{eyeH=Math.min(200,eyeH+10);document.getElementById('v-h').textContent=`${eyeH}cm`;};
 
 // 범위
-document.getElementById('br-').onclick=()=>{rangeIdx=Math.max(0,rangeIdx-1);document.getElementById('v-r').textContent=RANGE_LABELS[rangeIdx];};
-document.getElementById('br+').onclick=()=>{rangeIdx=Math.min(4,rangeIdx+1);document.getElementById('v-r').textContent=RANGE_LABELS[rangeIdx];};
+document.getElementById('br-').onclick=()=>{rangeIdx=Math.max(0,rangeIdx-1);document.getElementById('v-r').textContent=RANGE_LABELS[rangeIdx];applyMesh();};
+document.getElementById('br+').onclick=()=>{rangeIdx=Math.min(4,rangeIdx+1);document.getElementById('v-r').textContent=RANGE_LABELS[rangeIdx];applyMesh();};
 
 // ── 초기화 & 루프 ─────────────────────────────────────────────────────────
 buildMesh(); updateUI(); startSim();
 
 function loop(){
   fP+=ALPHA*(rawP-fP); fR+=ALPHA*(rawR-fR);
-  if(!isFrozen) computeHeights();
   updateCam3();
   updateBallMarkerScreenPos();
   updateLabels();
