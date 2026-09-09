@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>ParkCaddy AR - 파크골프 지면 3D 지형 굴곡 측정기</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;700;800&family=Pretendard:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --font-primary: 'Pretendard', sans-serif;
+      --font-display: 'Outfit', sans-serif;
+      --bg: #07090e;
+      --hud: rgba(13,17,26,0.92);
+      --border: rgba(255,255,255,0.15);
+      --green: #10B981; --neon: #00F0FF; --yellow: #F59E0B; --red: #EF4444;
+      --txt: #F3F4F6; --muted: #9CA3AF;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+    html,body { width:100%; height:100dvh; overflow:hidden; background:var(--bg); font-family:var(--font-primary); color:var(--txt); }
+    #app { position:relative; width:100vw; height:100dvh; overflow:hidden; }
+
+    /* 카메라 & 캔버스 */
+    #cam,#snap { position:absolute; top:0; left:0; width:100%; height:100%; object-fit:cover; z-index:1; }
+    #snap.hidden { display:none; }
+    #ar  { position:absolute; top:0; left:0; width:100%; height:100%; z-index:2; }
+    #lbl { position:absolute; top:0; left:0; width:100%; height:100%; z-index:3; pointer-events:none; }
+
+    /* 높이 배지 */
+    .badge { position:absolute; transform:translate(-50%,-50%); font-family:var(--font-display); font-size:.72rem; font-weight:800; padding:2px 7px; border-radius:6px; backdrop-filter:blur(8px); box-shadow:0 2px 8px rgba(0,0,0,.6); white-space:nowrap; }
+    .bp { background:rgba(239,68,68,.88); color:#FFF; border:1px solid #FCA5A5; }
+    .bn { background:rgba(0,240,255,.88); color:#07090E; border:1px solid #67E8F9; }
+    .bz { background:rgba(16,185,129,.88); color:#FFF; border:1px solid #6EE7B7; }
+
+    /* HUD 오버레이 */
+    #hud { position:absolute; top:0; left:0; width:100%; height:100dvh; z-index:10; pointer-events:none;
+           display:flex; flex-direction:column; justify-content:space-between;
+           padding:max(10px,env(safe-area-inset-top)) max(10px,env(safe-area-inset-right)) max(10px,env(safe-area-inset-bottom)) max(10px,env(safe-area-inset-left)); }
+    #hud * { pointer-events:auto; }
+
+    /* 헤더 */
+    .hdr { display:flex; flex-direction:column; gap:6px; background:var(--hud); backdrop-filter:blur(16px); border:1px solid var(--border); border-radius:16px; padding:8px 12px; }
+    .hdr-top { display:flex; justify-content:space-between; align-items:center; gap:6px; }
+    .brand { display:flex; align-items:center; gap:8px; }
+    .logo-ico { font-size:1.1rem; background:rgba(16,185,129,.2); width:32px; height:32px; border-radius:10px; display:flex; align-items:center; justify-content:center; border:1px solid var(--green); }
+    .brand h1 { font-family:var(--font-display); font-size:1rem; font-weight:800; color:#FFF; }
+    .badge-ar { color:var(--neon); }
+    .hdr-controls { display:flex; gap:4px; }
+    .step-ctrl { display:flex; align-items:center; gap:3px; background:rgba(0,0,0,.5); padding:3px 6px; border-radius:10px; border:1px solid var(--border); }
+    .step-label { font-size:.6rem; color:var(--muted); font-weight:700; }
+    .step-val { font-family:var(--font-display); font-size:.78rem; font-weight:800; color:var(--neon); min-width:44px; text-align:center; }
+    .btn-step { background:rgba(255,255,255,.1); border:none; color:#FFF; width:18px; height:18px; border-radius:4px; font-weight:800; cursor:pointer; font-size:.7rem; display:flex; align-items:center; justify-content:center; }
+
+    /* 구간 탭 */
+    .zones { display:flex; background:rgba(0,0,0,.5); padding:3px; border-radius:10px; gap:2px; }
+    .zone-btn { flex:1; padding:6px 4px; border:none; background:transparent; color:var(--muted); font-size:.68rem; font-weight:700; border-radius:8px; cursor:pointer; transition:all .2s; text-align:center; }
+    .zone-btn.on { background:linear-gradient(135deg,rgba(16,185,129,.4),rgba(0,240,255,.3)); color:#FFF; border:1px solid var(--green); }
+
+    /* 우측 사이드 */
+    .side { position:absolute; top:105px; right:10px; display:flex; flex-direction:column; gap:8px; z-index:30; align-items:center; }
+    .ico-btn { width:44px; height:44px; border-radius:12px; background:var(--hud); backdrop-filter:blur(16px); border:1.5px solid var(--border); color:#FFF; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1px; cursor:pointer; }
+    .ico-btn .i { font-size:1.05rem; } .ico-btn .t { font-size:.52rem; font-weight:700; color:var(--muted); }
+
+    /* 민감도 + 범위 슬라이더 카드 */
+    .slider-card { background:var(--hud); backdrop-filter:blur(16px); border:1.5px solid var(--border); border-radius:14px; padding:8px 6px; display:flex; flex-direction:column; align-items:center; gap:5px; }
+    .sc-title { font-size:.55rem; font-weight:800; color:var(--neon); text-align:center; line-height:1.1; }
+    .sc-val { font-family:var(--font-display); font-size:.8rem; font-weight:800; color:#FFF; }
+    input[type="range"].vslider { writing-mode:vertical-lr; direction:rtl; appearance:slider-vertical; width:14px; height:80px; background:rgba(255,255,255,.2); border-radius:6px; cursor:pointer; }
+    .sc-divider { width:100%; height:1px; background:var(--border); }
+    .range-row { display:flex; align-items:center; gap:2px; }
+    .range-val { font-family:var(--font-display); font-size:.6rem; font-weight:800; color:var(--yellow); min-width:34px; text-align:center; }
+
+    /* 히트맵 레전드 */
+    .legend { position:absolute; bottom:200px; left:10px; background:var(--hud); backdrop-filter:blur(16px); border:1px solid var(--border); border-radius:12px; padding:6px 10px; width:155px; z-index:20; display:none; flex-direction:column; gap:4px; }
+    .legend.show { display:flex; }
+    .legend-hdr { font-size:.62rem; font-weight:700; color:var(--muted); display:flex; justify-content:space-between; align-items:center; cursor:pointer; }
+    .legend-body { display:flex; flex-direction:column; gap:2px; }
+    .legend.col .legend-body { display:none; }
+    .leg-row { display:flex; align-items:center; justify-content:space-between; font-size:.58rem; color:#FFF; font-weight:600; }
+    .leg-swatch { width:14px; height:10px; border-radius:3px; border:1px solid rgba(255,255,255,.3); }
+
+    /* 공 마커 */
+    #ball { position:absolute; top:45%; left:50%; transform:translate(-50%,-50%); display:flex; flex-direction:column; align-items:center; cursor:grab; z-index:25; touch-action:none; }
+    #ball.drag { cursor:grabbing; opacity:.9; }
+    .ball-ring { width:44px; height:44px; border:2.5px solid var(--neon); border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:1.1rem; background:rgba(0,240,255,.15); backdrop-filter:blur(4px); box-shadow:0 0 15px rgba(0,240,255,.5); transition:transform .15s; }
+    .ball-ring.pulse { border-color:var(--yellow); transform:scale(1.25); background:rgba(245,158,11,.2); }
+    .ball-tip { margin-top:4px; font-size:.68rem; font-weight:700; background:rgba(0,0,0,.88); padding:3px 10px; border-radius:10px; color:var(--neon); border:1px solid rgba(0,240,255,.5); white-space:nowrap; pointer-events:none; }
+
+    /* 고정 표시 배너 */
+    #freeze-banner { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); z-index:35; background:rgba(0,240,255,.18); border:2px solid var(--neon); border-radius:16px; padding:8px 18px; font-size:.8rem; font-weight:800; color:var(--neon); letter-spacing:.05em; display:none; pointer-events:none; backdrop-filter:blur(8px); }
+    #freeze-banner.show { display:block; animation:fadeout 1.5s ease forwards; animation-delay:.5s; }
+    @keyframes fadeout { to { opacity:0; } }
+
+    /* 푸터 */
+    .ftr { display:flex; flex-direction:column; gap:5px; background:var(--hud); backdrop-filter:blur(16px); border:1px solid var(--border); border-radius:18px; padding:8px 12px; margin-top:auto; z-index:15; }
+
+    /* 측정 모드 탭 */
+    .mmode-tabs { display:flex; background:rgba(0,0,0,.5); padding:3px; border-radius:10px; gap:2px; }
+    .mmode-btn { flex:1; padding:7px 4px; border:none; background:transparent; color:var(--muted); font-size:.72rem; font-weight:700; border-radius:8px; cursor:pointer; text-align:center; transition:all .2s; }
+    .mmode-btn.on { background:linear-gradient(135deg,rgba(245,158,11,.35),rgba(239,68,68,.25)); color:#FFF; border:1px solid var(--yellow); }
+
+    /* 측정 패널 */
+    .ctrl-panel { display:flex; flex-direction:column; gap:5px; }
+    .ctrl-panel.hidden { display:none; }
+
+    /* 버튼 */
+    .btn { padding:10px; border:none; font-weight:800; border-radius:10px; cursor:pointer; font-size:.82rem; display:flex; align-items:center; justify-content:center; gap:4px; transition:opacity .2s; }
+    .btn:disabled { opacity:.5; cursor:not-allowed; }
+    .btn-g  { background:linear-gradient(135deg,var(--green),var(--neon)); color:#000; box-shadow:0 4px 12px rgba(16,185,129,.3); }
+    .btn-y  { background:linear-gradient(135deg,var(--yellow),var(--red)); color:#000; box-shadow:0 4px 12px rgba(245,158,11,.3); }
+    .btn-d  { background:rgba(255,255,255,.1); border:1px solid rgba(255,255,255,.25); color:#FFF; }
+    .btn-2r { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+
+    /* 상태 바 */
+    .sbar { padding:5px 10px; border-radius:8px; font-size:.68rem; font-weight:700; line-height:1.3; }
+    .sw { background:rgba(245,158,11,.12); border:1px solid rgba(245,158,11,.35); color:#FCD34D; }
+    .so { background:rgba(16,185,129,.12); border:1px solid rgba(16,185,129,.35); color:#6EE7B7; }
+    .si { background:rgba(0,240,255,.08); border:1px solid rgba(0,240,255,.25); color:#67E8F9; }
+
+    /* 위자드 안내 */
+    .wizard-box { background:rgba(0,0,0,.4); border:1px solid rgba(0,240,255,.2); border-radius:10px; padding:8px 10px; font-size:.66rem; color:#E0F2FE; line-height:1.5; }
+    .wizard-box b { color:var(--neon); }
+    .wizard-box ol { margin:4px 0 0 14px; }
+    .wizard-box.sm { padding:6px 10px; font-size:.62rem; }
+
+    /* 측정 중 표시 */
+    .measuring-box { background:rgba(245,158,11,.15); border:1px solid rgba(245,158,11,.4); border-radius:10px; padding:10px; text-align:center; font-size:.78rem; font-weight:800; color:var(--yellow); }
+
+    /* 정밀 포인트 목록 */
+    .pts { display:flex; flex-direction:column; gap:2px; max-height:52px; overflow-y:auto; }
+    .pt  { display:flex; justify-content:space-between; padding:2px 8px; background:rgba(255,255,255,.06); border-radius:5px; font-size:.6rem; }
+    .pt .lbl { color:var(--muted); } .pt .v { font-family:var(--font-display); font-weight:800; }
+    .v.p { color:#FCA5A5; } .v.n { color:#67E8F9; } .v.z { color:#6EE7B7; }
+
+    /* 뷰 탭 */
+    .view-tabs { display:flex; background:rgba(0,0,0,.4); padding:3px; border-radius:10px; }
+    .view-btn { flex:1; padding:5px; border:none; background:transparent; color:var(--muted); font-size:.68rem; font-weight:700; border-radius:6px; cursor:pointer; }
+    .view-btn.on { background:rgba(16,185,129,.3); color:#FFF; border:1px solid var(--green); }
+
+    /* 안내 */
+    .instr { background:linear-gradient(90deg,rgba(0,240,255,.1),rgba(16,185,129,.1)); border:1px solid rgba(0,240,255,.2); border-radius:8px; padding:5px 10px; font-size:.66rem; font-weight:600; color:#E0F2FE; display:flex; align-items:flex-start; gap:5px; line-height:1.35; }
+
+    /* 카메라 권한 배너 */
+    .cam-banner { position:absolute; top:80px; left:50%; transform:translateX(-50%); z-index:50; width:88%; max-width:320px; }
+    .cam-card { background:rgba(13,17,26,.95); backdrop-filter:blur(20px); border:1.5px solid var(--neon); border-radius:16px; padding:14px; text-align:center; display:flex; flex-direction:column; gap:8px; box-shadow:0 10px 30px rgba(0,0,0,.8); }
+    .btn-perm { padding:12px; background:linear-gradient(135deg,var(--green),var(--neon)); color:#000; font-weight:800; border:none; border-radius:10px; cursor:pointer; font-size:.9rem; }
+  </style>
+</head>
+<body>
+<div id="app">
+  <video id="cam" autoplay playsinline muted></video>
+  <canvas id="snap" class="hidden"></canvas>
+  <canvas id="ar"></canvas>
+  <div id="lbl"></div>
+  <div id="freeze-banner">📸 화면 고정됨</div>
+
+  <div id="cam-perm" class="cam-banner">
+    <div class="cam-card">
+      <h3>📷 모바일 카메라 연동</h3>
+      <p style="font-size:.72rem;color:#9CA3AF;">카메라로 지면을 비추고 3D 지형을 측정합니다.</p>
+      <button id="btn-cam" class="btn-perm">📷 카메라 및 센서 켜기</button>
+    </div>
+  </div>
+
+  <main id="hud">
+    <!-- 헤더 -->
+    <header class="hdr">
+      <div class="hdr-top">
+        <div class="brand">
+          <div class="logo-ico">⛳</div>
+          <h1>PARK CADDY <span class="badge-ar">TERRAIN 3D</span></h1>
+        </div>
+        <div class="hdr-controls">
+          <div class="step-ctrl">
+            <span class="step-label">📸높이</span>
+            <button class="btn-step" id="bh-">-</button>
+            <span class="step-val" id="v-height">130cm</span>
+            <button class="btn-step" id="bh+">+</button>
+          </div>
+          <div class="step-ctrl">
+            <span class="step-label">📐범위</span>
+            <button class="btn-step" id="br-">-</button>
+            <span class="step-val" id="v-range">±15cm</span>
+            <button class="btn-step" id="br+">+</button>
+          </div>
+        </div>
+      </div>
+      <div class="zones">
+        <button class="zone-btn" data-z="tee">🏌️ 티오프 (30m+)</button>
+        <button class="zone-btn" data-z="approach">⛳ 어프로치 (~50m)</button>
+        <button class="zone-btn on" data-z="putting">🎯 퍼팅 (~10m)</button>
+      </div>
+    </header>
+
+    <!-- 우측 사이드 -->
+    <aside class="side">
+      <button id="btn-lock" class="ico-btn"><span class="i">🔒</span><span class="t">고정</span></button>
+      <button id="btn-flip" class="ico-btn"><span class="i">📷</span><span class="t">전환</span></button>
+      <button id="btn-demo" class="ico-btn"><span class="i">🎬</span><span class="t">데모</span></button>
+      <div class="slider-card">
+        <div class="sc-title">🔍 굴곡<br>민감도</div>
+        <div class="sc-val" id="v-sens">1.0x</div>
+        <input type="range" id="sl-sens" class="vslider" min="1" max="5" step="0.5" value="1">
+        <div class="sc-divider"></div>
+        <div class="sc-title" style="color:var(--yellow)">🔢 배수</div>
+        <div class="sc-val" id="v-mult" style="font-size:.7rem;color:var(--yellow)">×1</div>
+        <input type="range" id="sl-mult" class="vslider" min="1" max="5" step="1" value="1" style="height:60px;">
+      </div>
+    </aside>
+
+    <!-- 히트맵 레전드 -->
+    <section class="legend" id="legend">
+      <div class="legend-hdr" id="leg-hdr"><span>🎨 높이 레전드</span><span id="leg-tog" style="font-size:.6rem;color:var(--neon)">접기 ▲</span></div>
+      <div class="legend-body">
+        <div class="leg-row"><span>+15cm 이상</span><div class="leg-swatch" style="background:#EF4444"></div></div>
+        <div class="leg-row"><span>+5~+15cm</span><div class="leg-swatch" style="background:#F59E0B"></div></div>
+        <div class="leg-row"><span>-5~+5cm (평지)</span><div class="leg-swatch" style="background:#10B981"></div></div>
+        <div class="leg-row"><span>-15~-5cm</span><div class="leg-swatch" style="background:#00F0FF"></div></div>
+        <div class="leg-row"><span>-15cm 이하</span><div class="leg-swatch" style="background:#1E40AF"></div></div>
+      </div>
+    </section>
+
+    <!-- 공 마커 -->
+    <div id="ball">
+      <div class="ball-ring" id="ball-ring">⚪</div>
+      <span class="ball-tip" id="ball-tip">⚪ 공 위치 (0.0 cm)</span>
+    </div>
+
+    <!-- 푸터 -->
+    <footer class="ftr">
+      <!-- 측정 모드 탭 -->
+      <div class="mmode-tabs">
+        <button class="mmode-btn on" data-mm="realtime">🏃 실시간 경사</button>
+        <button class="mmode-btn" data-mm="precision">📏 정밀 터치</button>
+      </div>
+
+      <!-- 실시간 패널 -->
+      <div id="rt-panel" class="ctrl-panel">
+        <div id="rt-inner"><!-- 동적 렌더링 --></div>
+      </div>
+
+      <!-- 정밀 패널 -->
+      <div id="pr-panel" class="ctrl-panel hidden">
+        <div id="pr-inner"><!-- 단계별 위자드 동적 렌더링 --></div>
+      </div>
+
+      <!-- 뷰 탭 -->
+      <div class="view-tabs">
+        <button class="view-btn on" data-v="grid">3D 실측 격자</button>
+        <button class="view-btn" data-v="heatmap">깊이 히트맵</button>
+        <button class="view-btn" data-v="contour">등고선 뷰</button>
+      </div>
+
+      <!-- 안내 -->
+      <div class="instr"><span>💡</span><span id="txt-instr">측정 방법을 선택하세요.</span></div>
+    </footer>
+  </main>
+</div>
+
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js';
+
+// ── 상수 ───────────────────────────────────────────────────────────────────
+const ZONE = {
+  tee:      { d:80,  w:60 },
+  approach: { d:40,  w:30 },
+  putting:  { d:8,   w:6  }
+};
+const EXAG = 6.0;       // 높이 시각 과장배율
+const ALPHA = 0.15;     // 자이로 저주파필터
+const DN = 20;          // 격자 밀도
+const RANGES = [5,10,15,30,50]; // cm 단위 최대범위 옵션
+
+// ── DOM ────────────────────────────────────────────────────────────────────
+const camEl    = document.getElementById('cam');
+const snapEl   = document.getElementById('snap');
+const arEl     = document.getElementById('ar');
+const lblEl    = document.getElementById('lbl');
+const permBanner = document.getElementById('cam-perm');
+const instrEl  = document.getElementById('txt-instr');
+const ballEl   = document.getElementById('ball');
+const ballRing = document.getElementById('ball-ring');
+const ballTip  = document.getElementById('ball-tip');
+const legend   = document.getElementById('legend');
+const freezeBanner = document.getElementById('freeze-banner');
+
+// ── 상태 ───────────────────────────────────────────────────────────────────
+let isSim = true, stream = null;
+let viewMode = 'grid', measMode = 'realtime', zone = 'putting';
+let sensitivity = 1.0, eyeH = 130, rangeIdx = 2, mult = 1;
+let isLocked = false, isFrozen = false, facingMode = 'environment';
+
+let bx = 0.5, by = 0.45, isDrag = false; // 공 마커
+
+let rawP = 45, rawR = 0, fP = 45, fR = 0; // 자이로
+
+// 실시간 모드
+let calibP = null, calibR = null, isCalib = false, isCalibrating = false;
+
+// 정밀 모드
+let pts = [];          // {gridX,gridZ,pitch,roll,hCm,label}
+let isMeasuring = false;
+let precDone = false;
+
+let heightsM = Array.from({length:DN+1},()=>new Float32Array(DN+1));
+
+// ── THREE.js ──────────────────────────────────────────────────────────────
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x000000, 4.0, 9.0); // 원거리 격자 페이드아웃
+
+const cam3 = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 0.1, 100);
+const renderer = new THREE.WebGLRenderer({canvas:arEl, alpha:true, antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth, innerHeight);
+
+scene.add(new THREE.AmbientLight(0xffffff,0.9));
+const dLight = new THREE.DirectionalLight(0x00f0ff,1.2);
+dLight.position.set(5,15,10); scene.add(dLight);
+
+const contourMat = new THREE.ShaderMaterial({
+  uniforms:{ uS:{value:1.0}, uM:{value:1.0} },
+  vertexShader:`varying float vH; void main(){ vH=position.y; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.); }`,
+  fragmentShader:`
+    varying float vH; uniform float uS,uM;
+    void main(){
+      float h=vH/max(uS*uM,0.01);
+      float ln=abs(fract(h*30.-.5)-.5)/fwidth(h*30.);
+      float a=1.-min(ln,1.);
+      vec3 c=vec3(0.06,0.85,0.45);
+      if(h>0.03) c=mix(vec3(0.96,0.62,0.04),vec3(0.94,0.27,0.27),clamp(h*4.,0.,1.));
+      else if(h<-0.03) c=mix(vec3(0.,0.94,1.),vec3(0.12,0.25,0.69),clamp(-h*4.,0.,1.));
+      gl_FragColor=vec4(mix(c,vec3(1.),a*.85),0.88);
+    }
+  `,
+  transparent:true, side:THREE.DoubleSide, fog:false
+});
+
+let geo, gridM, nodePts, heatM, contourM;
+
+function buildMesh(){
+  [gridM,nodePts,heatM,contourM].forEach(m=>m&&scene.remove(m));
+  // 깊이 8→5로 축소해 배경 침범 줄임
+  geo = new THREE.PlaneGeometry(5.5, 5.5, DN, DN);
+  geo.rotateX(-Math.PI/2);
+  geo.translate(0, 0, -2.0);
+
+  gridM = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({color:0x00f0ff,wireframe:true,transparent:true,opacity:.75,fog:true}));
+  scene.add(gridM);
+
+  nodePts = new THREE.Points(geo, new THREE.PointsMaterial({color:0x10b981,size:.12,transparent:true,opacity:.9}));
+  scene.add(nodePts);
+
+  geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array((DN+1)*(DN+1)*3),3));
+  heatM = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({vertexColors:true,transparent:true,opacity:.75,side:THREE.DoubleSide,fog:true}));
+  heatM.visible=(viewMode==='heatmap'); scene.add(heatM);
+
+  contourM = new THREE.Mesh(geo, contourMat);
+  contourM.visible=(viewMode==='contour'); scene.add(contourM);
+}
+
+// ── 화면 고정 / 해제 ───────────────────────────────────────────────────────
+function freezeFrame(){
+  if(!isSim && camEl.readyState>=2){
+    snapEl.width=innerWidth; snapEl.height=innerHeight;
+    const ctx=snapEl.getContext('2d');
+    const vw=camEl.videoWidth||innerWidth, vh=camEl.videoHeight||innerHeight;
+    const s=Math.max(innerWidth/vw, innerHeight/vh);
+    const dw=vw*s, dh=vh*s;
+    ctx.drawImage(camEl,(innerWidth-dw)/2,(innerHeight-dh)/2,dw,dh);
+    snapEl.classList.remove('hidden');
+    camEl.style.display='none';
+  }
+  isFrozen=true; isLocked=true;
+  // 고정 배너 잠깐 표시
+  freezeBanner.className='show';
+  setTimeout(()=>{ freezeBanner.className=''; },2500);
+}
+
+function unfreezeFrame(){
+  if(!isSim){
+    snapEl.classList.add('hidden');
+    camEl.style.display='block';
+  }
+  isFrozen=false; isLocked=false;
+}
+
+// ── 공 마커 드래그 ─────────────────────────────────────────────────────────
+ballEl.addEventListener('pointerdown',()=>{ isDrag=true; ballEl.classList.add('drag'); });
+window.addEventListener('pointermove',e=>{
+  if(!isDrag) return;
+  const cx=e.touches?e.touches[0].clientX:e.clientX;
+  const cy=e.touches?e.touches[0].clientY:e.clientY;
+  bx=Math.max(.08,Math.min(.92,cx/innerWidth));
+  by=Math.max(.15,Math.min(.72,cy/innerHeight));
+  ballEl.style.left=`${bx*100}%`;
+  ballEl.style.top=`${by*100}%`;
+});
+window.addEventListener('pointerup',()=>{ isDrag=false; ballEl.classList.remove('drag'); });
+
+// ── 높이 계산 ──────────────────────────────────────────────────────────────
+function computeHeights(){
+  if(measMode==='realtime') computeRT();
+  else computePR();
+}
+
+function computeRT(){
+  const z=ZONE[zone], cols=DN+1, rows=DN+1;
+  const dp=isCalib?(fP-calibP):0, dr=isCalib?(fR-calibR):0;
+  const dpR=dp*Math.PI/180, drR=dr*Math.PI/180;
+  const bGx=(bx-.5)*z.w, bGz=(by-.5)*z.d;
+  const bH=Math.tan(dpR)*bGz+Math.tan(drR)*bGx;
+  for(let r=0;r<rows;r++){
+    const gz=(r/DN-.5)*z.d;
+    for(let c=0;c<cols;c++){
+      const gx=(c/DN-.5)*z.w;
+      heightsM[r][c]=(Math.tan(dpR)*gz+Math.tan(drR)*gx)-bH;
+    }
+  }
+  applyMesh();
+}
+
+function computePR(){
+  const z=ZONE[zone], cols=DN+1, rows=DN+1;
+  if(pts.length===0){
+    for(let r=0;r<rows;r++) for(let c=0;c<cols;c++) heightsM[r][c]=0;
+    applyMesh(); return;
+  }
+  for(let r=0;r<rows;r++){
+    const gz=(r/DN-.5)*z.d;
+    for(let c=0;c<cols;c++){
+      const gx=(c/DN-.5)*z.w;
+      let wS=0,hS=0;
+      for(const p of pts){
+        const d2=(gx-p.gx)**2+(gz-p.gz)**2+0.0025;
+        const w=1/d2;
+        const lH=(p.hCm/100)+Math.tan(p.pitch*Math.PI/180)*(gz-p.gz)+Math.tan(p.roll*Math.PI/180)*(gx-p.gx);
+        hS+=w*lH; wS+=w;
+      }
+      heightsM[r][c]=wS>0?hS/wS:0;
+    }
+  }
+  applyMesh();
+}
+
+function applyMesh(){
+  if(!geo) return;
+  const pos=geo.attributes.position, colors=geo.attributes.color.array;
+  const maxM=RANGES[rangeIdx]/100; // cm→m
+  for(let r=0;r<=DN;r++){
+    for(let c=0;c<=DN;c++){
+      const idx=r*(DN+1)+c;
+      const hm=heightsM[r][c];
+      const yVis=Math.max(-1.4,Math.min(1.4, hm*sensitivity*mult*EXAG));
+      pos.setY(idx, yVis);
+      // 범위 초과 체크
+      const hClamped=Math.max(-maxM,Math.min(maxM,hm));
+      setColor(colors,idx,hClamped*100);
+    }
+  }
+  pos.needsUpdate=true; geo.attributes.color.needsUpdate=true;
+  geo.computeVertexNormals();
+  contourMat.uniforms.uS.value=sensitivity;
+  contourMat.uniforms.uM.value=mult;
+}
+
+function setColor(a,i,hCm){
+  let r,g,b;
+  if(hCm>15){r=.94;g=.27;b=.27;}
+  else if(hCm>5){r=.96;g=.62;b=.04;}
+  else if(hCm>=-5){r=.06;g=.85;b=.45;}
+  else if(hCm>-15){r=0;g=.94;b=1;}
+  else{r=.12;g=.25;b=.69;}
+  a[i*3]=r;a[i*3+1]=g;a[i*3+2]=b;
+}
+
+// ── 라벨 업데이트 ──────────────────────────────────────────────────────────
+function updateLabels(){
+  lblEl.innerHTML='';
+  if(viewMode!=='grid'||!geo) return;
+  const pos=geo.attributes.position;
+  const wh=innerWidth/2, hh=innerHeight/2;
+  const v=new THREE.Vector3();
+  const step=Math.max(2,Math.floor(DN/5));
+  for(let r=0;r<=DN;r+=step){
+    for(let c=0;c<=DN;c+=step){
+      const idx=r*(DN+1)+c;
+      v.set(pos.getX(idx),pos.getY(idx),pos.getZ(idx));
+      const hCm=Math.round(heightsM[r][c]*100);
+      v.project(cam3);
+      if(v.z<1){
+        const sx=v.x*wh+wh, sy=-v.y*hh+hh;
+        if(sx>35&&sx<innerWidth-35&&sy>95&&sy<innerHeight-160){
+          const d=document.createElement('div');
+          d.className=`badge ${hCm>1?'bp':hCm<-1?'bn':'bz'}`;
+          d.style.left=`${sx}px`; d.style.top=`${sy}px`;
+          d.textContent=`${hCm>0?'+':''}${hCm}cm`;
+          lblEl.appendChild(d);
+        }
+      }
+    }
+  }
+  // 공 마커 텍스트 업데이트
+  const br=Math.round(heightsM[Math.round(by*DN)][Math.round(bx*DN)]*100)||0;
+  ballTip.textContent=`⚪ 공 위치 (${br>0?'+':''}${br}.0 cm)`;
+}
+
+function updateCam3(){
+  const rp=THREE.MathUtils.degToRad(45), dist=5.0;
+  cam3.position.set(0,Math.sin(rp)*dist+0.6,Math.cos(rp)*dist);
+  cam3.lookAt(0,0,-2.0);
+}
+
+// ── 실시간 모드 UI 렌더링 ──────────────────────────────────────────────────
+function renderRT(){
+  const el=document.getElementById('rt-inner');
+  if(!el) return;
+
+  if(isCalibrating){
+    el.innerHTML=`<div class="measuring-box">⏳ 기준 교정 중... 폰을 고정하세요</div>`;
+    return;
+  }
+
+  if(isFrozen){
+    el.innerHTML=`
+      <div class="sbar so">📸 지형 고정됨 — 아래 버튼으로 재측정하세요</div>
+      <button id="btn-remeasure" class="btn btn-d">📷 재측정 (처음부터)</button>
+    `;
+    document.getElementById('btn-remeasure').onclick=()=>{
+      isCalib=false; calibP=null; calibR=null;
+      unfreezeFrame(); renderRT(); updateInstr();
+    };
+    return;
+  }
+
+  el.innerHTML=`
+    <button id="btn-calib" class="btn btn-g">🎯 지금 위치 평지 기준 교정 (3초)</button>
+    <div class="sbar ${isCalib?'so':'sw'}" id="calib-bar">
+      ${isCalib
+        ? `✅ 교정 완료 | 전후 ${(fP-calibP).toFixed(1)}° 좌우 ${(fR-calibR).toFixed(1)}°`
+        : '⚠️ 미교정 — 평평한 지면에서 교정 후 이동하세요'}
+    </div>
+    ${isCalib?`<button id="btn-freeze" class="btn btn-d">📸 현재 지형 스냅샷 고정</button>`:''}
+  `;
+
+  document.getElementById('btn-calib').onclick=startCalib;
+  if(isCalib){
+    document.getElementById('btn-freeze').onclick=()=>{ freezeFrame(); renderRT(); updateInstr(); };
+  }
+}
+
+function updateCalibBar(){
+  const el=document.getElementById('calib-bar');
+  if(!el||isFrozen||isCalibrating) return;
+  el.className=`sbar ${isCalib?'so':'sw'}`;
+  el.textContent=isCalib
+    ? `✅ 교정 완료 | 전후 ${(fP-calibP).toFixed(1)}° 좌우 ${(fR-calibR).toFixed(1)}°`
+    : '⚠️ 미교정 — 평평한 지면에서 교정 후 이동하세요';
+}
+
+// ── 정밀 모드 위자드 UI ────────────────────────────────────────────────────
+function renderPR(){
+  const el=document.getElementById('pr-inner');
+  if(!el) return;
+
+  if(isMeasuring){
+    el.innerHTML=`<div class="measuring-box">⏳ 지면 접촉 측정 중...<br>폰을 지면에 수평으로 고정하세요</div>`;
+    return;
+  }
+
+  if(precDone){
+    el.innerHTML=`
+      <div class="sbar so">✅ ${pts.length}개 지점 지형도 완성</div>
+      <div class="pts" id="pts-list">${renderPtsList()}</div>
+      <button id="btn-restart" class="btn btn-d">🔄 처음부터 다시 측정</button>
+    `;
+    document.getElementById('btn-restart').onclick=()=>{
+      pts=[]; precDone=false; unfreezeFrame(); renderPR(); updateInstr();
+    };
+    return;
+  }
+
+  if(isFrozen && pts.length>0){
+    // 측정 후 고정 상태: 추가 or 완성 선택
+    el.innerHTML=`
+      <div class="sbar so">✅ ${pts.length}개 지점 측정됨</div>
+      <div class="pts">${renderPtsList()}</div>
+      <div class="btn-2r">
+        <button id="btn-add" class="btn btn-d">➕ 위치 추가 측정</button>
+        <button id="btn-done" class="btn btn-y">✅ 지형도 완성</button>
+      </div>
+    `;
+    document.getElementById('btn-add').onclick=()=>{ unfreezeFrame(); renderPR(); updateInstr(); };
+    document.getElementById('btn-done').onclick=()=>{ precDone=true; renderPR(); updateInstr(); };
+    return;
+  }
+
+  if(pts.length===0){
+    // 1단계: 공 위치 기준점 측정
+    el.innerHTML=`
+      <div class="wizard-box">
+        <b>📍 1단계 — 공 위치 기준 측정</b>
+        <ol>
+          <li>⚪ 마커를 <b>공이 있는 위치</b>로 드래그</li>
+          <li>공 위치로 <b>직접 이동</b></li>
+          <li>폰을 <b>화면이 위</b>로 오도록 지면에 올려놓기</li>
+          <li>아래 버튼 클릭 (2초간 측정)</li>
+        </ol>
+      </div>
+      <button id="btn-m1" class="btn btn-y">📏 공 위치 측정 (2초)</button>
+    `;
+    document.getElementById('btn-m1').onclick=startTouchMeasure;
+  } else {
+    // 2단계: 추가 지점 측정
+    el.innerHTML=`
+      <div class="wizard-box sm">
+        <b>📍 2단계 — 추가 지점 측정</b>
+        <ol>
+          <li>⚪ 마커를 <b>다음 측정 위치</b>로 드래그 (예: 홀컵 방향)</li>
+          <li>그 위치로 <b>이동</b> → 지면에 폰 올려놓고 측정</li>
+        </ol>
+      </div>
+      <div class="pts">${renderPtsList()}</div>
+      <div class="btn-2r">
+        <button id="btn-m2" class="btn btn-y">📏 추가 측정 (2초)</button>
+        <button id="btn-done2" class="btn btn-d">✅ 완성</button>
+      </div>
+    `;
+    document.getElementById('btn-m2').onclick=startTouchMeasure;
+    document.getElementById('btn-done2').onclick=()=>{
+      precDone=true; freezeFrame(); renderPR(); updateInstr();
+    };
+  }
+}
+
+function renderPtsList(){
+  return pts.map(p=>{
+    const cm=Math.round(p.hCm), s=cm>0?'+':'', cls=cm>1?'p':cm<-1?'n':'z';
+    return `<div class="pt"><span class="lbl">${p.label}</span><span class="v ${cls}">${s}${cm}cm</span></div>`;
+  }).join('');
+}
+
+// ── 교정 (실시간) ──────────────────────────────────────────────────────────
+function startCalib(){
+  if(isCalibrating) return;
+  isCalibrating=true;
+  renderRT(); updateInstr();
+  let smp=[], rem=3;
+  const t=setInterval(()=>{
+    smp.push({p:fP,r:fR}); rem--;
+    if(rem>0){
+      const el=document.querySelector('.measuring-box');
+      if(el) el.textContent=`⏳ 기준 교정 중... (${rem}초) 폰을 고정하세요`;
+    } else {
+      clearInterval(t);
+      isCalibrating=false;
+      calibP=smp.reduce((s,x)=>s+x.p,0)/smp.length;
+      calibR=smp.reduce((s,x)=>s+x.r,0)/smp.length;
+      isCalib=true;
+      renderRT(); updateInstr();
+    }
+  },1000);
+}
+
+// ── 터치 측정 (정밀) ───────────────────────────────────────────────────────
+function startTouchMeasure(){
+  if(isMeasuring) return;
+  isMeasuring=true;
+  ballRing.classList.add('pulse');
+  renderPR(); updateInstr();
+  let smp=[], rem=2;
+  const t=setInterval(()=>{
+    smp.push({p:fP,r:fR}); rem--;
+    const el=document.querySelector('.measuring-box');
+    if(rem>0&&el) el.innerHTML=`⏳ 지면 접촉 측정 중... (${rem}초)<br>폰을 지면에 수평으로 고정하세요`;
+    else {
+      clearInterval(t);
+      isMeasuring=false;
+      ballRing.classList.remove('pulse');
+      const ap=smp.reduce((s,x)=>s+x.p,0)/smp.length;
+      const ar=smp.reduce((s,x)=>s+x.r,0)/smp.length;
+      const z=ZONE[zone];
+      const gx=(bx-.5)*z.w, gz=(by-.5)*z.d;
+      let hCm=0;
+      if(pts.length>0){
+        let wS=0,hS=0;
+        for(const p of pts){
+          const d2=(gx-p.gx)**2+(gz-p.gz)**2+0.0025, w=1/d2;
+          const lH=(p.hCm/100)+Math.tan(p.pitch*Math.PI/180)*(gz-p.gz)+Math.tan(p.roll*Math.PI/180)*(gx-p.gx);
+          hS+=w*lH; wS+=w;
+        }
+        hCm=(wS>0?hS/wS:0)*100;
+      }
+      const label=pts.length===0?'⚪ 공 위치 (기준 0cm)':`📍 지점 ${pts.length+1}`;
+      if(pts.length===0) hCm=0;
+      pts.push({gx,gz,pitch:ap,roll:ar,hCm,label});
+      computeHeights();
+      freezeFrame();
+      renderPR(); updateInstr();
+    }
+  },1000);
+}
+
+// ── 안내 텍스트 ────────────────────────────────────────────────────────────
+function updateInstr(){
+  if(measMode==='realtime'){
+    if(isCalibrating){
+      instrEl.textContent='⏳ 3초간 폰을 고정하여 기준점을 교정 중입니다...';
+    } else if(isFrozen){
+      instrEl.textContent='📸 지형이 고정되었습니다. [재측정]으로 다시 시작하거나 뷰 탭으로 다양한 시각화를 확인하세요.';
+    } else if(!isCalib){
+      instrEl.textContent='🎯 평평한 지면에서 카메라를 지면 방향으로 향하고 [평지 기준 교정]을 누르세요.';
+    } else {
+      instrEl.textContent='✅ 교정 완료! 카메라 각도를 유지하며 이동하면 경사 실시간 표시. [📸 지형 스냅샷 고정]으로 결과를 저장하세요.';
+    }
+  } else {
+    if(isMeasuring){
+      instrEl.textContent='⏳ 측정 중... 폰을 움직이지 마세요!';
+    } else if(precDone){
+      instrEl.textContent='✅ 지형도 완성! 3D 격자/히트맵/등고선으로 지형을 확인하세요.';
+    } else if(isFrozen&&pts.length>0){
+      instrEl.textContent=`✅ ${pts.length}개 지점 측정 완료. [➕ 위치 추가] 또는 [✅ 지형도 완성]을 선택하세요.`;
+    } else if(pts.length===0){
+      instrEl.textContent='📍 ①공 마커 드래그 → ②그 위치로 이동 → ③폰을 지면에 수평으로 올려놓고 [공 위치 측정]';
+    } else {
+      instrEl.textContent='📍 마커를 다음 위치로 이동 → 그 위치로 이동 → 지면에 폰 올려놓고 [추가 측정] (추가할수록 정밀!)';
+    }
+  }
+}
+
+// ── 데모 시뮬레이션 ────────────────────────────────────────────────────────
+let simT=0;
+function startSim(){
+  isSim=true;
+  snapEl.classList.remove('hidden'); camEl.style.display='none';
+  calibP=45.0; calibR=0.0; isCalib=true;
+  rawP=47.2; rawR=0.8;
+  const ctx=snapEl.getContext('2d');
+  (function draw(){
+    if(!isSim) return;
+    simT+=0.02;
+    if(!isLocked){ rawP=47.2+Math.sin(simT*.5)*.4; rawR=0.8+Math.cos(simT*.7)*.3; }
+    const w=snapEl.width=innerWidth, h=snapEl.height=innerHeight;
+    ctx.fillStyle='#1E293B'; ctx.fillRect(0,0,w,h*.35);
+    ctx.fillStyle='#065F46'; ctx.fillRect(0,h*.35,w,h*.65);
+    requestAnimationFrame(draw);
+  })();
+  renderRT(); updateInstr();
+}
+
+// ── 카메라 시작 ────────────────────────────────────────────────────────────
+async function startCamera(){
+  if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function'){
+    try{ await DeviceOrientationEvent.requestPermission(); }catch(e){}
+  }
+  if(!navigator.mediaDevices?.getUserMedia){ startSim(); return; }
+
+  const list=[
+    {video:{facingMode:{ideal:facingMode},width:{ideal:1280},height:{ideal:720}}},
+    {video:{facingMode:facingMode}},
+    {video:true}
+  ];
+  let s=null;
+  for(const c of list){
+    try{ if(stream) stream.getTracks().forEach(t=>t.stop()); s=await navigator.mediaDevices.getUserMedia(c); if(s) break; }
+    catch(e){ console.warn(e.name); }
+  }
+  if(!s){ startSim(); return; }
+  stream=s;
+  const onReady=async()=>{
+    isSim=false; snapEl.classList.add('hidden'); camEl.style.display='block'; permBanner.style.display='none';
+    try{ await camEl.play(); }catch(e){ setTimeout(()=>camEl.play().catch(()=>{}),100); }
+  };
+  camEl.addEventListener('loadedmetadata', onReady, {once:true});
+  camEl.srcObject=stream;
+  if(camEl.readyState>=1){ camEl.removeEventListener('loadedmetadata',onReady); onReady(); }
+}
+
+// ── 자이로 ─────────────────────────────────────────────────────────────────
+if(window.DeviceOrientationEvent){
+  window.addEventListener('deviceorientation',e=>{
+    if(e.beta!==null&&e.gamma!==null&&!isLocked){ rawP=e.beta; rawR=e.gamma; }
+  });
+}
+
+// ── 이벤트 ─────────────────────────────────────────────────────────────────
+document.getElementById('btn-cam').onclick=startCamera;
+document.getElementById('btn-demo').onclick=()=>{ if(isSim) startCamera(); else startSim(); };
+document.getElementById('btn-flip').onclick=()=>{ facingMode=facingMode==='environment'?'user':'environment'; startCamera(); };
+document.getElementById('btn-lock').onclick=e=>{
+  isLocked=!isLocked;
+  e.currentTarget.querySelector('.i').textContent=isLocked?'🔓':'🔒';
+};
+
+// 측정 모드 탭
+document.querySelectorAll('.mmode-btn').forEach(b=>b.addEventListener('click',e=>{
+  document.querySelectorAll('.mmode-btn').forEach(x=>x.classList.remove('on'));
+  e.currentTarget.classList.add('on');
+  measMode=e.currentTarget.dataset.mm;
+  document.getElementById('rt-panel').classList.toggle('hidden',measMode!=='realtime');
+  document.getElementById('pr-panel').classList.toggle('hidden',measMode!=='precision');
+  computeHeights(); updateInstr();
+  if(measMode==='realtime') renderRT(); else renderPR();
+}));
+
+// 구간 탭
+document.querySelectorAll('.zone-btn').forEach(b=>b.addEventListener('click',e=>{
+  document.querySelectorAll('.zone-btn').forEach(x=>x.classList.remove('on'));
+  e.currentTarget.classList.add('on');
+  const newZ=e.currentTarget.dataset.z;
+  if(newZ!==zone&&pts.length>0&&!confirm('구간 변경 시 정밀 측정 포인트가 초기화됩니다. 계속?')) return;
+  if(newZ!==zone){ pts=[]; precDone=false; }
+  zone=newZ; computeHeights(); updateInstr(); renderPR();
+}));
+
+// 뷰 탭
+document.querySelectorAll('.view-btn').forEach(b=>b.addEventListener('click',e=>{
+  document.querySelectorAll('.view-btn').forEach(x=>x.classList.remove('on'));
+  e.currentTarget.classList.add('on');
+  viewMode=e.currentTarget.dataset.v;
+  if(gridM) gridM.visible=nodePts.visible=(viewMode==='grid');
+  if(heatM) heatM.visible=(viewMode==='heatmap');
+  if(contourM) contourM.visible=(viewMode==='contour');
+  legend.classList.toggle('show',viewMode==='heatmap');
+}));
+
+// 레전드 접기
+document.getElementById('leg-hdr').onclick=()=>{
+  legend.classList.toggle('col');
+  document.getElementById('leg-tog').textContent=legend.classList.contains('col')?'펼치기 ▼':'접기 ▲';
+};
+
+// 민감도
+document.getElementById('sl-sens').oninput=e=>{
+  sensitivity=parseFloat(e.target.value);
+  document.getElementById('v-sens').textContent=`${sensitivity.toFixed(1)}x`;
+};
+
+// 배수 슬라이더
+document.getElementById('sl-mult').oninput=e=>{
+  mult=parseInt(e.target.value);
+  document.getElementById('v-mult').textContent=`×${mult}`;
+};
+
+// 촬영 높이
+document.getElementById('bh-').onclick=()=>{
+  eyeH=Math.max(80,eyeH-10);
+  document.getElementById('v-height').textContent=`${eyeH}cm`;
+};
+document.getElementById('bh+').onclick=()=>{
+  eyeH=Math.min(200,eyeH+10);
+  document.getElementById('v-height').textContent=`${eyeH}cm`;
+};
+
+// 측정 범위
+const RANGE_LABELS=['±5cm','±10cm','±15cm','±30cm','±50cm'];
+document.getElementById('br-').onclick=()=>{
+  rangeIdx=Math.max(0,rangeIdx-1);
+  document.getElementById('v-range').textContent=RANGE_LABELS[rangeIdx];
+};
+document.getElementById('br+').onclick=()=>{
+  rangeIdx=Math.min(RANGE_LABELS.length-1,rangeIdx+1);
+  document.getElementById('v-range').textContent=RANGE_LABELS[rangeIdx];
+};
+
+// ── 초기화 ─────────────────────────────────────────────────────────────────
+buildMesh();
+renderRT();
+updateInstr();
+startSim();
+
+// ── 렌더 루프 ──────────────────────────────────────────────────────────────
+function loop(){
+  fP+=ALPHA*(rawP-fP); fR+=ALPHA*(rawR-fR);
+  if(!isLocked){ computeHeights(); updateCam3(); updateLabels(); }
+  if(measMode==='realtime'&&!isFrozen&&!isCalibrating) updateCalibBar();
+  renderer.render(scene,cam3);
+  requestAnimationFrame(loop);
+}
+loop();
+
+window.addEventListener('resize',()=>{
+  cam3.aspect=innerWidth/innerHeight; cam3.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+</script>
+</body>
+</html>
