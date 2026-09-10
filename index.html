@@ -132,7 +132,8 @@
     .hdr-ctrls{display:none;}
     .brand h1{font-size:.78rem;}.logo{width:26px;height:26px;font-size:.9rem;}
     .side{display:none;}
-    .distance-readout{position:absolute;top:max(96px,calc(env(safe-area-inset-top) + 84px));left:50%;transform:translateX(-50%);z-index:18;pointer-events:none;background:rgba(5,20,15,.84);border:1px solid rgba(16,185,129,.65);border-radius:12px;padding:7px 12px;color:#FFF;font-family:var(--fd);font-size:.86rem;font-weight:800;backdrop-filter:blur(8px);display:none;white-space:nowrap;}
+    .flow-arrow{position:absolute;transform:translate(-50%,-50%);pointer-events:none;font-family:var(--fd);font-size:.62rem;font-weight:800;padding:3px 5px;border-radius:7px;background:rgba(4,15,22,.72);backdrop-filter:blur(4px);white-space:nowrap;}
+    .flow-up{color:#FDA4AF;border:1px solid rgba(248,113,113,.8);}.flow-down{color:#67E8F9;border:1px solid rgba(34,211,238,.8);}    .distance-readout{position:absolute;top:max(96px,calc(env(safe-area-inset-top) + 84px));left:50%;transform:translateX(-50%);z-index:18;pointer-events:none;background:rgba(5,20,15,.84);border:1px solid rgba(16,185,129,.65);border-radius:12px;padding:7px 12px;color:#FFF;font-family:var(--fd);font-size:.86rem;font-weight:800;backdrop-filter:blur(8px);display:none;white-space:nowrap;}
     .distance-readout.show{display:block;}    .slope-cue{position:absolute;top:max(60px,calc(env(safe-area-inset-top) + 48px));left:50%;transform:translateX(-50%);z-index:18;pointer-events:none;background:rgba(4,12,18,.78);border:1px solid rgba(0,240,255,.42);border-radius:999px;padding:6px 11px;color:#E0F2FE;font-size:.68rem;font-weight:800;backdrop-filter:blur(8px);white-space:nowrap;}
     .ftr{padding:0 10px 9px;border-radius:18px;gap:7px;max-height:72dvh;overflow:auto;}
     .ftr:not(.sheet-open) > :not(.sheet-handle){display:none;}
@@ -154,7 +155,7 @@
   <!-- 측정 카운트다운 오버레이 -->
   <div id="meas-overlay">
     <div class="meas-box">
-      <div class="meas-step" id="ov-step">1단계: 평지 기준 교정</div>
+      <div class="meas-step" id="ov-step">1단계: 기준 자세 저장</div>
       <div class="meas-count" id="ov-count">3</div>
       <div class="meas-label">폰을 고정하세요...</div>
     </div>
@@ -178,7 +179,7 @@
           <h1>PARK CADDY <span class="ar">TERRAIN 3D</span></h1>
         </div>
         <div class="hdr-r">
-          <button id="btn-flat-reset" class="flat-btn">📍 현재 위치 기준</button>
+          <button id="btn-flat-reset" class="flat-btn">↺ 측정 초기화</button>
         </div>
       </div>
       <div class="hdr-ctrls">
@@ -241,20 +242,19 @@
         <div class="step-dot" id="s2">2</div>
         <div class="step-line" id="sl2"></div>
         <div class="step-dot" id="s3">✅</div>
-        <span class="step-txt" id="step-label" style="margin-left:6px">1단계: 현재 위치 기준 설정</span>
+        <span class="step-txt" id="step-label" style="margin-left:6px">1단계: 기준 자세 설정</span>
       </div>
 
       <!-- 메인 측정 버튼 -->
-      <button id="btn-meas" class="meas-btn btn-idle">🎯 현재 위치 기준 설정</button>
+      <button id="btn-meas" class="meas-btn btn-idle">1) 기준 자세 저장</button>
 
       <!-- 상태 표시 -->
       <div class="sbar sw" id="status-bar">⚠️ 현재 사용자의 위치를 거리 기준점(0m)으로 사용합니다</div>
 
-      <!-- 뷰 탭 -->
-      <div class="vtabs">
-        <button class="vb on" data-v="grid">거리 격자</button>
-        <button class="vb" data-v="heatmap">거리 히트맵</button>
-        <button class="vb" data-v="contour">보조 격자</button>
+      <!-- 표시 레이어: 기본값은 두 레이어 모두 켜짐 -->
+      <div class="vtabs layer-controls">
+        <button class="vb on" id="toggle-grid" type="button">✓ 거리 그리드</button>
+        <button class="vb on" id="toggle-heatmap" type="button">✓ 깊이 히트맵</button>
       </div>
 
       <!-- 안내 -->
@@ -285,7 +285,7 @@ const statusBar = document.getElementById('status-bar');
 let measState = 'step1_idle';
 
 let isSim = true, stream = null;
-let viewMode = 'grid';
+let showGrid = true, showHeatmap = true;
 let distanceScale = 1.0, terrainSensitivity = 25, eyeH = 100, rangeIdx = 4;
 let isFrozen = false, facingMode = 'environment';
 
@@ -370,9 +370,9 @@ function buildMesh(){
   scene.add(nP);
   geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array((DN+1)*(DN+1)*3),3));
   hM = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({vertexColors:true,transparent:true,opacity:.75,side:THREE.DoubleSide,fog:true}));
-  hM.visible=(viewMode==='heatmap' || viewMode==='grid'); scene.add(hM);
+  hM.visible=showHeatmap; scene.add(hM);
   cM = new THREE.Mesh(geo, cMat);
-  cM.visible=(viewMode==='contour'); scene.add(cM);
+  cM.visible=false; scene.add(cM);
 
 
   updateDistanceRings();
@@ -498,13 +498,13 @@ function updateUI(){
     case 'step1_idle':
       s1.className='step-dot active'; s2.className='step-dot'; s3.className='step-dot';
       sl1.className='step-line'; sl2.className='step-line';
-      stepLbl.textContent='1단계: 현재 위치 기준 설정';
+      stepLbl.textContent='1단계: 기준 자세 설정';
       btnMeas.className='meas-btn btn-idle';
-      btnMeas.textContent='🎯 현재 위치 기준 설정';
+      btnMeas.textContent='1) 기준 자세 저장';
       btnMeas.disabled=false;
       statusBar.className='sbar sw';
-      statusBar.textContent='⚠️ 평평한 지면에서 카메라를 지면으로 향하고 측정하세요';
-      instrEl.textContent='📌 1단계: 평평한 지면에 서서 카메라를 지면 방향으로 향하고 [기준 측정]을 누르세요. 3초간 폰을 고정하세요.';
+      statusBar.textContent='⚠️ 카메라를 평소 측정 자세로 고정한 뒤 기준 자세를 저장하세요';
+      instrEl.textContent='📌 1) 평소처럼 지면을 비추고 [기준 자세 저장]을 누르세요. 3초 동안 폰을 고정합니다.';
       break;
 
     case 'step1_meas':
@@ -516,31 +516,31 @@ function updateUI(){
     case 'step2_idle':
       s1.className='step-dot done'; s2.className='step-dot active'; s3.className='step-dot';
       sl1.className='step-line done'; sl2.className='step-line';
-      stepLbl.textContent='2단계: 측정 위치로 이동 후 측정';
+      stepLbl.textContent='2단계: 지면 스캔';
       btnMeas.className='meas-btn btn-measure-2';
-      btnMeas.textContent='📸 이 위치 측정 & 고정 (3초)';
+      btnMeas.textContent='2) 지면 스캔 (3초)';
       btnMeas.disabled=false;
       statusBar.className='sbar so';
-      statusBar.textContent='✅ 기준 완료 — 측정할 위치로 이동 후 [측정 & 고정]을 누르세요';
-      instrEl.textContent='📌 2단계: 경사를 측정할 위치(예: 공 위치)로 이동하고 [측정 & 고정]을 누르세요.';
+      statusBar.textContent='✅ 기준 저장 완료 — 지면을 비춘 뒤 [지면 스캔]을 누르세요';
+      instrEl.textContent='📌 2) 같은 촬영 높이와 자세를 유지한 채 지면을 비추고 [지면 스캔]을 누르세요.';
       break;
 
     case 'step2_meas':
       btnMeas.className='meas-btn btn-measure-2'; btnMeas.disabled=true;
-      statusBar.className='sbar si'; statusBar.textContent='⏳ 지형 측정 중... 폰을 고정하세요';
-      instrEl.textContent='⏳ 폰을 움직이지 마세요! 3초간 현재 위치 지형을 측정합니다.';
+      statusBar.className='sbar si'; statusBar.textContent='⏳ 지면 스캔 중... 폰을 고정하세요';
+      instrEl.textContent='⏳ 폰을 움직이지 마세요. 3초간 상대 굴곡 힌트를 만듭니다.';
       break;
 
     case 'frozen':
       s1.className='step-dot done'; s2.className='step-dot done'; s3.className='step-dot done';
       sl1.className='step-line done'; sl2.className='step-line done';
-      stepLbl.textContent='✅ 측정 완료 — 화면 고정됨';
+      stepLbl.textContent='✅ 스캔 완료';
       btnMeas.className='meas-btn btn-frozen';
-      btnMeas.textContent='🔄 다시 측정 (새 위치)';
+      btnMeas.textContent='🔄 다시 스캔';
       btnMeas.disabled=false;
       statusBar.className='sbar sf';
-      statusBar.textContent='✅ 거리 기준점 설정됨 — 목표 지점을 탭해 추정 거리를 확인하세요';
-      instrEl.textContent='✅ 일반 스마트폰 모드에서는 고저차를 임의로 표시하지 않습니다. 공 마커를 맞춘 뒤 목표 지점을 탭하세요.';
+      statusBar.textContent='✅ 스캔 완료 — 격자에서 거리, 히트맵에서 흐름을 확인하세요';
+      instrEl.textContent='✅ 거리 그리드와 깊이 히트맵을 각각 끄거나 켤 수 있습니다. 화면을 탭하면 목표 거리도 확인할 수 있습니다.';
       break;
   }
 }
@@ -549,7 +549,7 @@ function updateUI(){
 function doMeasure(step, onDone){
   const ovStep=document.getElementById('ov-step');
   const ovCount=document.getElementById('ov-count');
-  ovStep.textContent = step===1 ? '1단계: 평지 기준 교정' : '2단계: 현재 위치 측정';
+  ovStep.textContent = step===1 ? '1단계: 기준 자세 저장' : '2단계: 지면 스캔';
   overlay.classList.add('show');
 
   let samples=[], rem=3;
@@ -637,35 +637,37 @@ function updateCam3(){
 function updateLabels(){
   if(!lblEl || !geo) return;
   lblEl.innerHTML='';
-  if(viewMode !== 'grid') return;
-
-  // 격자 전체가 아닌 화면상 충분히 떨어진 9~16개 지점만 표기해 카메라 시야를 보존한다.
-  const pos=geo.attributes.position, v=new THREE.Vector3();
-  const placed=[];
-  const step=Math.max(5, Math.floor(DN/4));
+  if(!showGrid && !showHeatmap) return;
+  const pos=geo.attributes.position, v=new THREE.Vector3(), placed=[];
+  const step=Math.max(5,Math.floor(DN/4));
   for(let r=0;r<=DN;r+=step){
     for(let c=0;c<=DN;c+=step){
-      const idx=r*(DN+1)+c;
-      const gx=pos.getX(idx), gz=pos.getZ(idx);
-      const distM=Math.hypot(gx-ball3X, gz-ball3Z)*distanceScale;
-      if(distM<0.45) continue;
+      const idx=r*(DN+1)+c, gx=pos.getX(idx), gz=pos.getZ(idx);
+      const distM=Math.hypot(gx-ball3X,gz-ball3Z)*distanceScale;
       v.set(gx,pos.getY(idx),gz).project(cam3);
       if(v.z>=1) continue;
       const sx=v.x*(innerWidth/2)+(innerWidth/2), sy=-v.y*(innerHeight/2)+(innerHeight/2);
-      if(sx<48||sx>innerWidth-48||sy<132||sy>innerHeight-118) continue;
-      if(placed.some(p=>Math.hypot(p.x-sx,p.y-sy)<92)) continue;
+      if(sx<45||sx>innerWidth-45||sy<105||sy>innerHeight-108) continue;
+      if(placed.some(p=>Math.hypot(p.x-sx,p.y-sy)<82)) continue;
       placed.push({x:sx,y:sy});
       const cm=Math.round(heightsM[r][c]*100);
-      const direction=cm>0?'▲':cm<0?'▼':'●';
-      const badge=document.createElement('div');
-      badge.className=`badge ${cm>0?'bp':cm<0?'bn':'bz'}`;
-      badge.style.left=`${sx}px`; badge.style.top=`${sy}px`;
-      badge.innerHTML=`<div class="bh">${direction} 상대 굴곡 ${cm>0?'+':''}${cm}cm</div><div class="bd">거리 ${distM.toFixed(1)}m</div>`;
-      lblEl.appendChild(badge);
+      if(showGrid){
+        const badge=document.createElement('div');
+        badge.className='badge bz'; badge.style.left=`${sx}px`; badge.style.top=`${sy}px`;
+        badge.innerHTML=`<div class="bh">거리 ${distM.toFixed(1)}m</div>`;
+        lblEl.appendChild(badge);
+      }
+      if(showHeatmap && hasRelativeTerrainHint){
+        const flow=document.createElement('div');
+        const arrow=cm>0?'▲':cm<0?'▼':'●';
+        flow.className=`flow-arrow ${cm>=0?'flow-up':'flow-down'}`;
+        flow.style.left=`${sx}px`; flow.style.top=`${sy-25}px`;
+        flow.textContent=`${arrow} ${Math.abs(cm)}cm`;
+        lblEl.appendChild(flow);
+      }
     }
   }
-}
-// ── 데모 ──────────────────────────────────────────────────────────────────
+}// ── 데모 ──────────────────────────────────────────────────────────────────
 let simT=0;
 function startSim(){
   isSim=true;
@@ -771,21 +773,25 @@ document.getElementById('btn-cam').onclick=startCamera;
 document.getElementById('btn-demo').onclick=()=>isSim?startCamera():startSim();
 document.getElementById('btn-flip').onclick=()=>{facingMode=facingMode==='environment'?'user':'environment';startCamera();};
 
-// 뷰 탭
-document.querySelectorAll('.vb').forEach(b=>b.addEventListener('click',e=>{
-  document.querySelectorAll('.vb').forEach(x=>x.classList.remove('on'));
-  e.currentTarget.classList.add('on'); viewMode=e.currentTarget.dataset.v;
-  if(gM) gM.visible=!!nP&&(nP.visible=(viewMode==='grid'));
-  if(hM) hM.visible=(viewMode==='heatmap' || viewMode==='grid');
-  if(cM) cM.visible=(viewMode==='contour');
-  legend.classList.toggle('show',viewMode==='heatmap');
-}));
+// 거리 그리드와 깊이 히트맵은 독립 레이어이며 기본값은 둘 다 켜짐.
+function refreshLayers(){
+  if(gM) gM.visible=showGrid;
+  if(nP) nP.visible=showGrid;
+  if(hM) hM.visible=showHeatmap;
+  if(cM) cM.visible=false;
+  document.getElementById('toggle-grid').classList.toggle('on',showGrid);
+  document.getElementById('toggle-heatmap').classList.toggle('on',showHeatmap);
+  document.getElementById('toggle-grid').textContent=`${showGrid?'✓':'○'} 거리 그리드`;
+  document.getElementById('toggle-heatmap').textContent=`${showHeatmap?'✓':'○'} 깊이 히트맵`;
+}
+document.getElementById('toggle-grid').onclick=()=>{showGrid=!showGrid;refreshLayers();};
+document.getElementById('toggle-heatmap').onclick=()=>{showHeatmap=!showHeatmap;refreshLayers();};
 
 // 거리 보정 및 카메라 높이는 평면 거리 계산의 척도에 반영한다.
 document.getElementById('bs-').onclick=()=>{ distanceScale=Math.max(0.6, distanceScale-0.1); document.getElementById('sl-s').value=distanceScale; document.getElementById('v-s').textContent=`${distanceScale.toFixed(1)}x`; document.getElementById('v-s-dist').textContent=`${distanceScale.toFixed(1)}x`; updateDistanceRings(); };
 document.getElementById('bs+').onclick=()=>{ distanceScale=Math.min(1.5, distanceScale+0.1); document.getElementById('sl-s').value=distanceScale; document.getElementById('v-s').textContent=`${distanceScale.toFixed(1)}x`; document.getElementById('v-s-dist').textContent=`${distanceScale.toFixed(1)}x`; updateDistanceRings(); };
 document.querySelectorAll('.pst-btn').forEach(btn=>btn.onclick=()=>{ document.querySelectorAll('.pst-btn').forEach(x=>x.classList.remove('on')); btn.classList.add('on'); eyeH=parseInt(btn.dataset.h,10); document.getElementById('v-h').textContent=`${eyeH}cm`; });
-document.getElementById('btn-flat-reset').onclick=()=>{ ball3X=0; ball3Z=0; target3X=null; target3Z=null; document.getElementById('distance-readout').classList.remove('show'); terrainBaseP=0; terrainBaseR=0; relativeSlopeP=0; relativeSlopeR=0; hasRelativeTerrainHint=false; updateSlopeCue(); computeHeights(); updateDistanceRings(); statusBar.className='sbar sw'; statusBar.textContent='⚠️ 현재 사용자의 위치를 거리 기준점(0m)으로 사용합니다'; };
+document.getElementById('btn-flat-reset').onclick=()=>{ ball3X=0; ball3Z=0; target3X=null; target3Z=null; document.getElementById('distance-readout').classList.remove('show'); terrainBaseP=0; terrainBaseR=0; relativeSlopeP=0; relativeSlopeR=0; hasRelativeTerrainHint=false; unfreezeFrame(); updateSlopeCue(); computeHeights(); updateDistanceRings(); measState='step1_idle'; updateUI(); };
 // 레전드 접기
 document.getElementById('leg-h').onclick=()=>{
   legend.classList.toggle('col');
@@ -818,12 +824,12 @@ sheetButton.addEventListener('click', () => {
 });
 updateSlopeCue();
 // ── 초기화 & 루프 ─────────────────────────────────────────────────────────
-buildMesh(); updateUI(); startSim();
+buildMesh(); refreshLayers(); updateUI(); startSim();
 
 function loop(){
   fP+=ALPHA*(rawP-fP); fR+=ALPHA*(rawR-fR);
   updateCam3();
-  updateBallMarkerScreenPos();
+
   updateLabels();
   renderer.render(scene,cam3);
   requestAnimationFrame(loop);
