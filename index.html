@@ -131,7 +131,8 @@
     .hdr-ctrls{display:none;}
     .brand h1{font-size:.78rem;}.logo{width:26px;height:26px;font-size:.9rem;}
     .side{display:none;}
-    .slope-cue{position:absolute;top:max(60px,calc(env(safe-area-inset-top) + 48px));left:50%;transform:translateX(-50%);z-index:18;pointer-events:none;background:rgba(4,12,18,.78);border:1px solid rgba(0,240,255,.42);border-radius:999px;padding:6px 11px;color:#E0F2FE;font-size:.68rem;font-weight:800;backdrop-filter:blur(8px);white-space:nowrap;}
+    .distance-readout{position:absolute;top:max(96px,calc(env(safe-area-inset-top) + 84px));left:50%;transform:translateX(-50%);z-index:18;pointer-events:none;background:rgba(5,20,15,.84);border:1px solid rgba(16,185,129,.65);border-radius:12px;padding:7px 12px;color:#FFF;font-family:var(--fd);font-size:.86rem;font-weight:800;backdrop-filter:blur(8px);display:none;white-space:nowrap;}
+    .distance-readout.show{display:block;}    .slope-cue{position:absolute;top:max(60px,calc(env(safe-area-inset-top) + 48px));left:50%;transform:translateX(-50%);z-index:18;pointer-events:none;background:rgba(4,12,18,.78);border:1px solid rgba(0,240,255,.42);border-radius:999px;padding:6px 11px;color:#E0F2FE;font-size:.68rem;font-weight:800;backdrop-filter:blur(8px);white-space:nowrap;}
     .ftr{padding:0 10px 9px;border-radius:18px;gap:7px;max-height:72dvh;overflow:auto;}
     .ftr:not(.sheet-open) > :not(.sheet-handle){display:none;}
     .sheet-handle{width:100%;background:transparent;border:0;color:#E0F2FE;font-weight:800;font-size:.76rem;padding:13px 4px 9px;cursor:pointer;text-align:center;}
@@ -167,6 +168,7 @@
   </div>
 
   <div id="slope-cue" class="slope-cue">↔ 상대 굴곡: 기준 설정 후 표시</div>
+  <div id="distance-readout" class="distance-readout">📏 거리: --</div>
   <main id="hud">
     <header class="hdr">
       <div class="hdr-top">
@@ -209,9 +211,9 @@
       <button id="btn-flip" class="ico-btn"><span class="i">📷</span><span class="t">전환</span></button>
       <button id="btn-demo" class="ico-btn"><span class="i">🎬</span><span class="t">데모</span></button>
       <div class="sc">
-        <div class="sc-t">📏 거리<br>보정</div>
-        <div class="sc-v" id="v-s">1.0x</div>
-        <input type="range" id="sl-s" class="vs" min="0.6" max="1.5" step="0.1" value="1">
+        <div class="sc-t">🎚️ 굴곡<br>민감도</div>
+        <div class="sc-v" id="v-s">10x</div>
+        <input type="range" id="sl-s" class="vs" min="1" max="10" step="1" value="10">
       </div>
     </aside>
 
@@ -286,7 +288,7 @@ let measState = 'step1_idle';
 
 let isSim = true, stream = null;
 let viewMode = 'grid';
-let distanceScale = 1.0, eyeH = 100, rangeIdx = 2;
+let distanceScale = 1.0, terrainSensitivity = 10, eyeH = 100, rangeIdx = 2;
 let isFrozen = false, facingMode = 'environment';
 
 // 공 마커 (3D 지면 고정 좌표 및 정규화 좌표)
@@ -323,7 +325,7 @@ const cMat = new THREE.ShaderMaterial({
     varying float vH; uniform float uS;
     void main(){
       float h=vH/max(uS,0.01);
-      float ln=abs(fract(h*30.-.5)-.5)/fwidth(h*30.);
+      float ln=abs(fract(h*100.-.5)-.5)/fwidth(h*100.);
       float a=1.-min(ln,1.);
       vec3 c=vec3(.06,.85,.45);
       if(h>.03)c=mix(vec3(.96,.62,.04),vec3(.94,.27,.27),clamp(h*4.,0.,1.));
@@ -438,9 +440,17 @@ function setTargetFromScreen(cx, cy) {
   target3X = rayHit.x;
   target3Z = rayHit.z;
   const distance = Math.hypot(target3X - ball3X, target3Z - ball3Z) * distanceScale;
+  updateDistanceReadout(distance);
   statusBar.className = 'sbar so';
-  statusBar.textContent = `📏 공 → 목표 추정 거리: ${distance.toFixed(1)}m (평면 기준)`;
-  instrEl.textContent = '고저차는 일반 카메라/자이로만으로 신뢰성 있게 산출할 수 없어 표시하지 않습니다.';
+  statusBar.textContent = `📏 공 → 목표 거리: ${distance.toFixed(1)}m (평면 기준)`;
+  instrEl.textContent = '색상과 화살표는 1cm 표시 단계의 상대 굴곡 힌트입니다. 실제 cm 정확도를 뜻하지는 않습니다.';
+}
+
+function updateDistanceReadout(distance){
+  const readout = document.getElementById('distance-readout');
+  if(!readout) return;
+  readout.textContent = `📏 공 → 목표  ${distance.toFixed(1)}m`;
+  readout.classList.add('show');
 }
 
 arEl.addEventListener('pointerdown', e => {
@@ -502,12 +512,12 @@ function updateSlopeCue(){
   cue.textContent=`↗ 상대 굴곡 힌트: ${[vertical,lateral].filter(Boolean).join(' · ')}`;
 }
 function setColor(a,i,hCm){
+  // 색상 단계는 1cm 간격으로 양자화한다. 이는 상대 굴곡의 표시 해상도이며 실제 측정 정확도는 아니다.
+  const cm = Math.round(Math.max(-20, Math.min(20, hCm)));
   let r,g,b;
-  if(hCm>15){r=.94;g=.27;b=.27;}
-  else if(hCm>5){r=.96;g=.62;b=.04;}
-  else if(hCm>=-5){r=.06;g=.85;b=.45;}
-  else if(hCm>-15){r=0;g=.94;b=1;}
-  else{r=.12;g=.25;b=.69;}
+  if(cm === 0){ r=.06; g=.85; b=.45; }
+  else if(cm > 0){ const t=cm/20; r=.18+.76*t; g=.85-.58*t; b=.16-.10*t; }
+  else { const t=(-cm)/20; r=.02+.10*t; g=.88-.60*t; b=.95-.28*t; }
   a[i*3]=r;a[i*3+1]=g;a[i*3+2]=b;
 }
 
@@ -635,8 +645,8 @@ btnMeas.addEventListener('click',()=>{
         const effDR = Math.abs(dr) < 0.8 ? 0 : dr;
         // 상대 굴곡 힌트: 숫자 높이 대신 방향과 색만 표시한다.
         // 기준 측정과 현재 측정 사이에 폰을 크게 돌리면 신뢰할 수 없으므로 작은 범위로 제한한다.
-        relativeSlopeP = Math.max(-0.05, Math.min(0.05, Math.tan(effDP * Math.PI / 180) * 0.22));
-        relativeSlopeR = Math.max(-0.05, Math.min(0.05, Math.tan(effDR * Math.PI / 180) * 0.22));
+        relativeSlopeP = Math.max(-0.09, Math.min(0.09, Math.tan(effDP * Math.PI / 180) * 0.22 * terrainSensitivity));
+        relativeSlopeR = Math.max(-0.09, Math.min(0.09, Math.tan(effDR * Math.PI / 180) * 0.22 * terrainSensitivity));
         measuredSlopeP = relativeSlopeP;
         measuredSlopeR = relativeSlopeR;
         hasRelativeTerrainHint = Math.abs(relativeSlopeP) + Math.abs(relativeSlopeR) > 0.003;
@@ -809,19 +819,18 @@ document.querySelectorAll('.vb').forEach(b=>b.addEventListener('click',e=>{
 document.getElementById('bs-').onclick=()=>{ distanceScale=Math.max(0.6, distanceScale-0.1); document.getElementById('sl-s').value=distanceScale; document.getElementById('v-s').textContent=`${distanceScale.toFixed(1)}x`; document.getElementById('v-s-dist').textContent=`${distanceScale.toFixed(1)}x`; updateDistanceRings(); };
 document.getElementById('bs+').onclick=()=>{ distanceScale=Math.min(1.5, distanceScale+0.1); document.getElementById('sl-s').value=distanceScale; document.getElementById('v-s').textContent=`${distanceScale.toFixed(1)}x`; document.getElementById('v-s-dist').textContent=`${distanceScale.toFixed(1)}x`; updateDistanceRings(); };
 document.querySelectorAll('.pst-btn').forEach(btn=>btn.onclick=()=>{ document.querySelectorAll('.pst-btn').forEach(x=>x.classList.remove('on')); btn.classList.add('on'); eyeH=parseInt(btn.dataset.h,10); document.getElementById('v-h').textContent=`${eyeH}cm`; });
-document.getElementById('btn-flat-reset').onclick=()=>{ ball3X=0; ball3Z=-3; target3X=null; target3Z=null; relativeSlopeP=0; relativeSlopeR=0; hasRelativeTerrainHint=false; updateSlopeCue(); computeHeights(); if(ball3DMesh) ball3DMesh.position.set(ball3X,0.12,ball3Z); if(ring3DMesh) ring3DMesh.position.set(ball3X,0.02,ball3Z); updateDistanceRings(); statusBar.className='sbar sw'; statusBar.textContent='⚠️ 공 마커를 실제 공 위치로 드래그하세요'; };
+document.getElementById('btn-flat-reset').onclick=()=>{ ball3X=0; ball3Z=-3; target3X=null; target3Z=null; document.getElementById('distance-readout').classList.remove('show'); relativeSlopeP=0; relativeSlopeR=0; hasRelativeTerrainHint=false; updateSlopeCue(); computeHeights(); if(ball3DMesh) ball3DMesh.position.set(ball3X,0.12,ball3Z); if(ring3DMesh) ring3DMesh.position.set(ball3X,0.02,ball3Z); updateDistanceRings(); statusBar.className='sbar sw'; statusBar.textContent='⚠️ 공 마커를 실제 공 위치로 드래그하세요'; };
 // 레전드 접기
 document.getElementById('leg-h').onclick=()=>{
   legend.classList.toggle('col');
   document.getElementById('leg-tog').textContent=legend.classList.contains('col')?'펼치기 ▼':'접기 ▲';
 };
 
-// 거리 보정: 알려진 거리에서만 조정하며, 높낮이에는 영향을 주지 않는다.
+// 굴곡 민감도는 색/화살표의 상대 표현만 확대하며 거리 계산에는 영향을 주지 않는다.
 document.getElementById('sl-s').oninput=e=>{
-  distanceScale=parseFloat(e.target.value);
-  document.getElementById('v-s').textContent=`${distanceScale.toFixed(1)}x`;
-  document.getElementById('v-s-dist').textContent=`${distanceScale.toFixed(1)}x`;
-  updateDistanceRings();
+  terrainSensitivity=parseInt(e.target.value,10);
+  document.getElementById('v-s').textContent=`${terrainSensitivity}x`;
+  if(hasRelativeTerrainHint) computeHeights();
 };
 
 // 촬영 높이
