@@ -694,10 +694,36 @@ function updateCam3(){
 
 // ── 라벨 (공 기준 실제 물리적 거리 및 높낮이 표시) ─────────────────────────────
 function updateLabels(){
-  // 화면을 가리는 다수의 수치 배지는 제거하고, 격자의 색과 상단 방향 힌트만 남긴다.
-  if(!lblEl) return;
+  if(!lblEl || !geo) return;
   lblEl.innerHTML='';
   bTip.textContent='⚪ 공 위치 — 드래그해서 맞추세요';
+  if(viewMode !== 'grid') return;
+
+  // 격자 전체가 아닌 화면상 충분히 떨어진 9~16개 지점만 표기해 카메라 시야를 보존한다.
+  const pos=geo.attributes.position, v=new THREE.Vector3();
+  const placed=[];
+  const step=Math.max(5, Math.floor(DN/4));
+  for(let r=0;r<=DN;r+=step){
+    for(let c=0;c<=DN;c+=step){
+      const idx=r*(DN+1)+c;
+      const gx=pos.getX(idx), gz=pos.getZ(idx);
+      const distM=Math.hypot(gx-ball3X, gz-ball3Z)*distanceScale;
+      if(distM<0.45) continue;
+      v.set(gx,pos.getY(idx),gz).project(cam3);
+      if(v.z>=1) continue;
+      const sx=v.x*(innerWidth/2)+(innerWidth/2), sy=-v.y*(innerHeight/2)+(innerHeight/2);
+      if(sx<48||sx>innerWidth-48||sy<132||sy>innerHeight-118) continue;
+      if(placed.some(p=>Math.hypot(p.x-sx,p.y-sy)<92)) continue;
+      placed.push({x:sx,y:sy});
+      const cm=Math.round(heightsM[r][c]*100);
+      const direction=cm>0?'▲':cm<0?'▼':'●';
+      const badge=document.createElement('div');
+      badge.className=`badge ${cm>0?'bp':cm<0?'bn':'bz'}`;
+      badge.style.left=`${sx}px`; badge.style.top=`${sy}px`;
+      badge.innerHTML=`<div class="bh">${direction} 상대 굴곡 ${cm>0?'+':''}${cm}cm</div><div class="bd">거리 ${distM.toFixed(1)}m</div>`;
+      lblEl.appendChild(badge);
+    }
+  }
 }
 // ── 데모 ──────────────────────────────────────────────────────────────────
 let simT=0;
