@@ -125,6 +125,21 @@
     .cb{position:absolute;top:80px;left:50%;transform:translateX(-50%);z-index:1000;width:88%;max-width:320px;pointer-events:auto;}
     .cc{background:rgba(13,17,26,.95);backdrop-filter:blur(20px);border:1.5px solid var(--n);border-radius:16px;padding:14px;text-align:center;display:flex;flex-direction:column;gap:8px;box-shadow:0 10px 30px rgba(0,0,0,.8);pointer-events:auto;}
     .btn-perm{padding:12px;background:linear-gradient(135deg,var(--g),var(--n));color:#000;font-weight:800;border:none;border-radius:10px;cursor:pointer;font-size:.9rem;pointer-events:auto;}
+
+    /* 측정 화면 우선: 보조 도구는 하단 시트에서만 펼친다. */
+    .hdr{align-self:flex-start;width:auto;max-width:250px;padding:6px 9px;border-radius:12px;}
+    .hdr-ctrls{display:none;}
+    .brand h1{font-size:.78rem;}.logo{width:26px;height:26px;font-size:.9rem;}
+    .side{display:none;}
+    .slope-cue{position:absolute;top:max(60px,calc(env(safe-area-inset-top) + 48px));left:50%;transform:translateX(-50%);z-index:18;pointer-events:none;background:rgba(4,12,18,.78);border:1px solid rgba(0,240,255,.42);border-radius:999px;padding:6px 11px;color:#E0F2FE;font-size:.68rem;font-weight:800;backdrop-filter:blur(8px);white-space:nowrap;}
+    .ftr{padding:0 10px 9px;border-radius:18px;gap:7px;max-height:72dvh;overflow:auto;}
+    .ftr:not(.sheet-open) > :not(.sheet-handle){display:none;}
+    .sheet-handle{width:100%;background:transparent;border:0;color:#E0F2FE;font-weight:800;font-size:.76rem;padding:13px 4px 9px;cursor:pointer;text-align:center;}
+    .sheet-handle::before{content:'⌃ ';color:var(--n);}.ftr:not(.sheet-open) .sheet-handle::before{content:'⌃ ';}.ftr.sheet-open .sheet-handle::before{content:'⌄ ';}
+    .ftr .hdr-ctrls{display:flex;order:2;margin:0;width:100%;justify-content:flex-start;}
+    .ftr .side{display:flex;position:static;order:3;flex-direction:row;width:100%;align-items:center;gap:6px;}
+    .ftr .side .ico-btn{width:50px;height:42px;}.ftr .side .sc{display:none;}
+    .ftr .step-row{order:4;}.ftr .meas-btn{order:5;}.ftr .sbar{order:6;}.ftr .vtabs{order:7;}.ftr .instr{order:8;}
   </style>
 </head>
 <body>
@@ -151,6 +166,7 @@
     </div>
   </div>
 
+  <div id="slope-cue" class="slope-cue">↔ 상대 굴곡: 기준 설정 후 표시</div>
   <main id="hud">
     <header class="hdr">
       <div class="hdr-top">
@@ -214,6 +230,7 @@
     </div>
 
     <footer class="ftr">
+      <button id="btn-sheet" class="sheet-handle" type="button">측정 도구 열기</button>
       <!-- 단계 표시 -->
       <div class="step-row" id="step-row">
         <div class="step-dot active" id="s1">1</div>
@@ -283,6 +300,7 @@ let rawP = 45, rawR = 0, fP = 45, fR = 0;
 // 기준 (1단계 측정값)
 let calibP = null, calibR = null;
 let measuredSlopeP = 0, measuredSlopeR = 0;
+let relativeSlopeP = 0, relativeSlopeR = 0, hasRelativeTerrainHint = false;
 
 // 높이 배열
 let heightsM = Array.from({length:DN+1},()=>new Float32Array(DN+1));
@@ -351,7 +369,7 @@ function buildMesh(){
   scene.add(nP);
   geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array((DN+1)*(DN+1)*3),3));
   hM = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({vertexColors:true,transparent:true,opacity:.75,side:THREE.DoubleSide,fog:true}));
-  hM.visible=(viewMode==='heatmap'); scene.add(hM);
+  hM.visible=(viewMode==='heatmap' || viewMode==='grid'); scene.add(hM);
   cM = new THREE.Mesh(geo, cMat);
   cM.visible=(viewMode==='contour'); scene.add(cM);
 
@@ -445,10 +463,13 @@ function updateBallMarkerScreenPos() {
 // ── 높이 계산 (3D 실제 미터 좌표계 기준) ──────────────────────────────────
 function computeHeights(){
   if(!geo) return;
-  // 일반 브라우저 카메라와 자이로만으로는 실제 지면 높이를 복원할 수 없다.
-  // 폰의 roll/pitch를 경사로 해석하지 않아 카메라를 돌려도 가짜 고저차가 생기지 않는다.
+  // cm 값이 아닌 색/방향 비교용 상대 굴곡이다. 시각 보조 외의 용도로 사용하지 않는다.
   for(let r = 0; r <= DN; r++){
-    for(let c = 0; c <= DN; c++) heightsM[r][c] = 0;
+    for(let c = 0; c <= DN; c++){
+      const idx = r * (DN + 1) + c;
+      const gx = geo.attributes.position.getX(idx), gz = geo.attributes.position.getZ(idx);
+      heightsM[r][c] = hasRelativeTerrainHint ? (relativeSlopeP * (gz - ball3Z) + relativeSlopeR * (gx - ball3X)) : 0;
+    }
   }
   applyMesh();
 }
@@ -462,7 +483,7 @@ function applyMesh(){
       const idx=r*(DN+1)+c;
       const hm=heightsM[r][c];
       // 과도한 왜곡(EXAG=6.0)을 없애고 직관적인 현실 스케일로 적용
-      pos.setY(idx, 0);
+      pos.setY(idx, Math.max(-0.18, Math.min(0.18, hm * 0.35)));
       const hcl=Math.max(-maxM,Math.min(maxM,hm));
       setColor(colors,idx,hcl*100);
     }
@@ -472,6 +493,14 @@ function applyMesh(){
   cMat.uniforms.uS.value=1.0;
 }
 
+function updateSlopeCue(){
+  const cue = document.getElementById('slope-cue');
+  if(!cue) return;
+  if(!hasRelativeTerrainHint){ cue.textContent='↔ 상대 굴곡: 평탄 또는 데이터 없음'; return; }
+  const vertical = relativeSlopeP > 0.004 ? '앞쪽 ↑' : relativeSlopeP < -0.004 ? '앞쪽 ↓' : '';
+  const lateral = relativeSlopeR > 0.004 ? '오른쪽 ↑' : relativeSlopeR < -0.004 ? '왼쪽 ↑' : '';
+  cue.textContent=`↗ 상대 굴곡 힌트: ${[vertical,lateral].filter(Boolean).join(' · ')}`;
+}
 function setColor(a,i,hCm){
   let r,g,b;
   if(hCm>15){r=.94;g=.27;b=.27;}
@@ -604,8 +633,14 @@ btnMeas.addEventListener('click',()=>{
         // 미세한 손떨림 및 0.8도 미만 오차는 평지(0)로 간주
         const effDP = Math.abs(dp) < 0.8 ? 0 : dp;
         const effDR = Math.abs(dr) < 0.8 ? 0 : dr;
-        measuredSlopeP = 0;
-        measuredSlopeR = 0;
+        // 상대 굴곡 힌트: 숫자 높이 대신 방향과 색만 표시한다.
+        // 기준 측정과 현재 측정 사이에 폰을 크게 돌리면 신뢰할 수 없으므로 작은 범위로 제한한다.
+        relativeSlopeP = Math.max(-0.05, Math.min(0.05, Math.tan(effDP * Math.PI / 180) * 0.22));
+        relativeSlopeR = Math.max(-0.05, Math.min(0.05, Math.tan(effDR * Math.PI / 180) * 0.22));
+        measuredSlopeP = relativeSlopeP;
+        measuredSlopeR = relativeSlopeR;
+        hasRelativeTerrainHint = Math.abs(relativeSlopeP) + Math.abs(relativeSlopeR) > 0.003;
+        updateSlopeCue();
         computeHeights();
         freezeFrame();
         measState='frozen'; updateUI();
@@ -616,6 +651,7 @@ btnMeas.addEventListener('click',()=>{
       unfreezeFrame();
       measuredSlopeP = 0;
       measuredSlopeR = 0;
+      relativeSlopeP = 0; relativeSlopeR = 0; hasRelativeTerrainHint = false; updateSlopeCue();
       computeHeights();
       measState='step2_idle'; updateUI();
       break;
@@ -648,40 +684,11 @@ function updateCam3(){
 
 // ── 라벨 (공 기준 실제 물리적 거리 및 높낮이 표시) ─────────────────────────────
 function updateLabels(){
+  // 화면을 가리는 다수의 수치 배지는 제거하고, 격자의 색과 상단 방향 힌트만 남긴다.
+  if(!lblEl) return;
   lblEl.innerHTML='';
-  if(viewMode!=='grid'||!geo) return;
-  const pos=geo.attributes.position, wh=innerWidth/2, hh=innerHeight/2;
-  const v=new THREE.Vector3();
-  const step=Math.max(2,Math.floor(DN/5));
-  for(let r=0;r<=DN;r+=step){
-    for(let c=0;c<=DN;c+=step){
-      const idx=r*(DN+1)+c;
-      const gx=pos.getX(idx);
-      const gz=pos.getZ(idx);
-      // 공 기준 순수 물리적 수평 거리 (항상 양수: 1.5m, 3.2m 등)
-      const distM=Math.hypot(gx-ball3X, gz-ball3Z) * distanceScale;
-      
-      // 공 마커 바로 위와 겹치지 않도록 필터링
-      if(distM < 0.35) continue;
-
-      v.set(gx, pos.getY(idx), gz);
-      const hCm=null;
-      v.project(cam3);
-      if(v.z<1){
-        const sx=v.x*wh+wh, sy=-v.y*hh+hh;
-        if(sx>35&&sx<innerWidth-35&&sy>80&&sy<innerHeight-150){
-          const d=document.createElement('div');
-          d.className=`badge ${hCm>1?'bp':hCm<-1?'bn':'bz'}`;
-          d.style.left=`${sx}px`; d.style.top=`${sy}px`;
-          d.innerHTML=`<div class="bh">고저차: 지원 안 됨</div><div class="bd">추정 거리: ${distM.toFixed(1)}m</div>`;
-          lblEl.appendChild(d);
-        }
-      }
-    }
-  }
   bTip.textContent='⚪ 공 위치 — 드래그해서 맞추세요';
 }
-
 // ── 데모 ──────────────────────────────────────────────────────────────────
 let simT=0;
 function startSim(){
@@ -793,7 +800,7 @@ document.querySelectorAll('.vb').forEach(b=>b.addEventListener('click',e=>{
   document.querySelectorAll('.vb').forEach(x=>x.classList.remove('on'));
   e.currentTarget.classList.add('on'); viewMode=e.currentTarget.dataset.v;
   if(gM) gM.visible=!!nP&&(nP.visible=(viewMode==='grid'));
-  if(hM) hM.visible=(viewMode==='heatmap');
+  if(hM) hM.visible=(viewMode==='heatmap' || viewMode==='grid');
   if(cM) cM.visible=(viewMode==='contour');
   legend.classList.toggle('show',viewMode==='heatmap');
 }));
@@ -802,7 +809,7 @@ document.querySelectorAll('.vb').forEach(b=>b.addEventListener('click',e=>{
 document.getElementById('bs-').onclick=()=>{ distanceScale=Math.max(0.6, distanceScale-0.1); document.getElementById('sl-s').value=distanceScale; document.getElementById('v-s').textContent=`${distanceScale.toFixed(1)}x`; document.getElementById('v-s-dist').textContent=`${distanceScale.toFixed(1)}x`; updateDistanceRings(); };
 document.getElementById('bs+').onclick=()=>{ distanceScale=Math.min(1.5, distanceScale+0.1); document.getElementById('sl-s').value=distanceScale; document.getElementById('v-s').textContent=`${distanceScale.toFixed(1)}x`; document.getElementById('v-s-dist').textContent=`${distanceScale.toFixed(1)}x`; updateDistanceRings(); };
 document.querySelectorAll('.pst-btn').forEach(btn=>btn.onclick=()=>{ document.querySelectorAll('.pst-btn').forEach(x=>x.classList.remove('on')); btn.classList.add('on'); eyeH=parseInt(btn.dataset.h,10); document.getElementById('v-h').textContent=`${eyeH}cm`; });
-document.getElementById('btn-flat-reset').onclick=()=>{ ball3X=0; ball3Z=-3; target3X=null; target3Z=null; if(ball3DMesh) ball3DMesh.position.set(ball3X,0.12,ball3Z); if(ring3DMesh) ring3DMesh.position.set(ball3X,0.02,ball3Z); updateDistanceRings(); statusBar.className='sbar sw'; statusBar.textContent='⚠️ 공 마커를 실제 공 위치로 드래그하세요'; };
+document.getElementById('btn-flat-reset').onclick=()=>{ ball3X=0; ball3Z=-3; target3X=null; target3Z=null; relativeSlopeP=0; relativeSlopeR=0; hasRelativeTerrainHint=false; updateSlopeCue(); computeHeights(); if(ball3DMesh) ball3DMesh.position.set(ball3X,0.12,ball3Z); if(ring3DMesh) ring3DMesh.position.set(ball3X,0.02,ball3Z); updateDistanceRings(); statusBar.className='sbar sw'; statusBar.textContent='⚠️ 공 마커를 실제 공 위치로 드래그하세요'; };
 // 레전드 접기
 document.getElementById('leg-h').onclick=()=>{
   legend.classList.toggle('col');
@@ -825,6 +832,16 @@ document.getElementById('bh+').onclick=()=>{eyeH=Math.min(200,eyeH+10);document.
 document.getElementById('br-').onclick=()=>{rangeIdx=Math.max(0,rangeIdx-1);document.getElementById('v-r').textContent=RANGE_LABELS[rangeIdx];applyMesh();};
 document.getElementById('br+').onclick=()=>{rangeIdx=Math.min(4,rangeIdx+1);document.getElementById('v-r').textContent=RANGE_LABELS[rangeIdx];applyMesh();};
 
+const footerSheet = document.querySelector('.ftr');
+const sheetButton = document.getElementById('btn-sheet');
+// 상단/측면 보조 조작을 하단 시트로 이동해 카메라 화면을 우선한다.
+footerSheet.insertBefore(document.querySelector('.hdr-ctrls'), sheetButton.nextSibling);
+footerSheet.insertBefore(document.querySelector('.side'), footerSheet.children[2]);
+sheetButton.addEventListener('click', () => {
+  footerSheet.classList.toggle('sheet-open');
+  sheetButton.textContent = footerSheet.classList.contains('sheet-open') ? '측정 도구 접기' : '측정 도구 열기';
+});
+updateSlopeCue();
 // ── 초기화 & 루프 ─────────────────────────────────────────────────────────
 buildMesh(); updateUI(); startSim();
 
