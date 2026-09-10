@@ -77,6 +77,7 @@
     #ball.drag{cursor:grabbing;opacity:.9;}
     .b-ring{width:44px;height:44px;border:2.5px solid var(--n);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:1.1rem;background:rgba(0,240,255,.15);backdrop-filter:blur(4px);box-shadow:0 0 15px rgba(0,240,255,.5);transition:transform .15s;}
     .b-ring.pulse{border-color:var(--y);transform:scale(1.25);background:rgba(245,158,11,.2);}
+    #ball{display:none!important;}
     .b-tip{margin-top:4px;font-size:.68rem;font-weight:700;background:rgba(0,0,0,.88);padding:3px 10px;border-radius:10px;color:var(--n);border:1px solid rgba(0,240,255,.5);white-space:nowrap;pointer-events:none;}
 
     /* 측정 진행 오버레이 */
@@ -177,7 +178,7 @@
           <h1>PARK CADDY <span class="ar">TERRAIN 3D</span></h1>
         </div>
         <div class="hdr-r">
-          <button id="btn-flat-reset" class="flat-btn">📍 기준점 초기화</button>
+          <button id="btn-flat-reset" class="flat-btn">📍 현재 위치 기준</button>
         </div>
       </div>
       <div class="hdr-ctrls">
@@ -212,8 +213,8 @@
       <button id="btn-demo" class="ico-btn"><span class="i">🎬</span><span class="t">데모</span></button>
       <div class="sc">
         <div class="sc-t">🎚️ 굴곡<br>민감도</div>
-        <div class="sc-v" id="v-s">10x</div>
-        <input type="range" id="sl-s" class="vs" min="1" max="10" step="1" value="10">
+        <div class="sc-v" id="v-s">25x</div>
+        <input type="range" id="sl-s" class="vs" min="1" max="50" step="1" value="25">
       </div>
     </aside>
 
@@ -226,9 +227,9 @@
       </div>
     </section>
 
-    <div id="ball">
+    <div id="ball" aria-hidden="true">
       <div class="b-ring" id="b-ring">⚪</div>
-      <span class="b-tip" id="b-tip">⚪ 공 위치 — 드래그해서 맞추세요</span>
+      <span class="b-tip" id="b-tip">📍 현재 사용자 위치 (0m)</span>
     </div>
 
     <footer class="ftr">
@@ -240,14 +241,14 @@
         <div class="step-dot" id="s2">2</div>
         <div class="step-line" id="sl2"></div>
         <div class="step-dot" id="s3">✅</div>
-        <span class="step-txt" id="step-label" style="margin-left:6px">1단계: 공 위치 설정</span>
+        <span class="step-txt" id="step-label" style="margin-left:6px">1단계: 현재 위치 기준 설정</span>
       </div>
 
       <!-- 메인 측정 버튼 -->
-      <button id="btn-meas" class="meas-btn btn-idle">🎯 공 위치 설정 완료</button>
+      <button id="btn-meas" class="meas-btn btn-idle">🎯 현재 위치 기준 설정</button>
 
       <!-- 상태 표시 -->
-      <div class="sbar sw" id="status-bar">⚠️ 공 마커를 실제 공 위치로 드래그하세요</div>
+      <div class="sbar sw" id="status-bar">⚠️ 현재 사용자의 위치를 거리 기준점(0m)으로 사용합니다</div>
 
       <!-- 뷰 탭 -->
       <div class="vtabs">
@@ -257,7 +258,7 @@
       </div>
 
       <!-- 안내 -->
-      <div class="instr"><span>💡</span><span id="txt-i">공 마커를 공에 맞춘 뒤, 지면의 목표 지점을 탭하면 평면 기준 거리를 표시합니다.</span></div>
+      <div class="instr"><span>💡</span><span id="txt-i">현재 사용자 위치를 0m로 두고, 지면의 목표 지점을 탭하면 거리를 표시합니다.</span></div>
     </footer>
   </main>
 </div>
@@ -266,7 +267,7 @@
 <script>
 // ── 상수 ──────────────────────────────────────────────────────────────────
 const EXAG = 6.0, ALPHA = 0.15, DN = 20;
-const RANGES = [5,10,15,30,50]; // cm 범위 옵션
+const RANGES = [25,50,100,150,200]; // 상대 굴곡 표시 범위(cm)
 
 // ── DOM ───────────────────────────────────────────────────────────────────
 const camEl   = document.getElementById('cam');
@@ -275,9 +276,6 @@ const arEl    = document.getElementById('ar');
 const lblEl   = document.getElementById('lbl');
 const permEl  = document.getElementById('cam-perm');
 const instrEl = document.getElementById('txt-i');
-const ballEl  = document.getElementById('ball');
-const bRing   = document.getElementById('b-ring');
-const bTip    = document.getElementById('b-tip');
 const legend  = document.getElementById('legend');
 const overlay = document.getElementById('meas-overlay');
 const btnMeas = document.getElementById('btn-meas');
@@ -288,11 +286,11 @@ let measState = 'step1_idle';
 
 let isSim = true, stream = null;
 let viewMode = 'grid';
-let distanceScale = 1.0, terrainSensitivity = 10, eyeH = 100, rangeIdx = 2;
+let distanceScale = 1.0, terrainSensitivity = 25, eyeH = 100, rangeIdx = 4;
 let isFrozen = false, facingMode = 'environment';
 
 // 공 마커 (3D 지면 고정 좌표 및 정규화 좌표)
-let ball3X = 0, ball3Z = -3.0;
+let ball3X = 0, ball3Z = 0; // 사용자(카메라) 현재 위치를 거리 기준점으로 사용
 let target3X = null, target3Z = null;
 let isDrag = false;
 
@@ -302,6 +300,7 @@ let rawP = 45, rawR = 0, fP = 45, fR = 0;
 // 기준 (1단계 측정값)
 let calibP = null, calibR = null;
 let measuredSlopeP = 0, measuredSlopeR = 0;
+let terrainBaseP = 0, terrainBaseR = 0;
 let relativeSlopeP = 0, relativeSlopeR = 0, hasRelativeTerrainHint = false;
 
 // 높이 배열
@@ -337,7 +336,7 @@ const cMat = new THREE.ShaderMaterial({
 });
 
 let geo, gM, nP, hM, cM;
-let ball3DMesh, ring3DMesh, target3DMesh;
+let target3DMesh;
 let distRingsGroup = new THREE.Group();
 scene.add(distRingsGroup);
 
@@ -362,7 +361,7 @@ function updateDistanceRings() {
 }
 
 function buildMesh(){
-  [gM,nP,hM,cM,ball3DMesh,ring3DMesh].forEach(m=>m&&scene.remove(m));
+  [gM,nP,hM,cM].forEach(m=>m&&scene.remove(m));
   geo = new THREE.PlaneGeometry(6.0, 8.0, DN, DN);
   geo.rotateX(-Math.PI/2); geo.translate(0,0,-3.0);
   gM = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({color:0x00f0ff,wireframe:true,transparent:true,opacity:.75,fog:true}));
@@ -375,61 +374,10 @@ function buildMesh(){
   cM = new THREE.Mesh(geo, cMat);
   cM.visible=(viewMode==='contour'); scene.add(cM);
 
-  // 3D 골프공 모델
-  const bGeo = new THREE.SphereGeometry(0.12, 16, 16);
-  const bMat = new THREE.MeshStandardMaterial({color:0xffffff, roughness:0.25, metalness:0.05});
-  ball3DMesh = new THREE.Mesh(bGeo, bMat);
-  ball3DMesh.position.set(ball3X, 0.12, ball3Z);
-  scene.add(ball3DMesh);
-
-  // 3D 지면 타겟 링
-  const rGeo = new THREE.RingGeometry(0.18, 0.28, 32);
-  rGeo.rotateX(-Math.PI/2);
-  const rMat = new THREE.MeshBasicMaterial({color:0x00f0ff, side:THREE.DoubleSide, transparent:true, opacity:0.85});
-  ring3DMesh = new THREE.Mesh(rGeo, rMat);
-  ring3DMesh.position.set(ball3X, 0.02, ball3Z);
-  scene.add(ring3DMesh);
 
   updateDistanceRings();
   computeHeights();
 }
-
-// ── 공 마커 3D 지면 레이캐스팅 & 드래그 ──────────────────────────────────
-const raycaster = new THREE.Raycaster();
-const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-const rayHit = new THREE.Vector3();
-
-function setBallFromScreen(cx, cy) {
-  const mouse = new THREE.Vector2((cx / innerWidth) * 2 - 1, -(cy / innerHeight) * 2 + 1);
-  raycaster.setFromCamera(mouse, cam3);
-  if (raycaster.ray.intersectPlane(groundPlane, rayHit)) {
-    ball3X = Math.max(-2.7, Math.min(2.7, rayHit.x));
-    ball3Z = Math.max(-6.5, Math.min(0.5, rayHit.z));
-    if (ball3DMesh) ball3DMesh.position.set(ball3X, 0.12, ball3Z);
-    if (ring3DMesh) ring3DMesh.position.set(ball3X, 0.02, ball3Z);
-    updateDistanceRings();
-    computeHeights();
-  }
-}
-
-ballEl.addEventListener('pointerdown', e => {
-  isDrag = true;
-  ballEl.classList.add('drag');
-});
-
-window.addEventListener('pointermove', e => {
-  if (!isDrag) return;
-  const cx = e.touches ? e.touches[0].clientX : e.clientX;
-  const cy = e.touches ? e.touches[0].clientY : e.clientY;
-  setBallFromScreen(cx, cy);
-});
-
-window.addEventListener('pointerup', () => {
-  if (isDrag) {
-    isDrag = false;
-    ballEl.classList.remove('drag');
-  }
-});
 
 // 목표 지점은 카메라 높이와 현재 시선으로 만든 평면에 투영한다.
 // 이것은 실제 고저차를 가정하지 않는 거리 추정이므로, 폰을 회전해도 경사값이 바뀌지 않는다.
@@ -442,14 +390,14 @@ function setTargetFromScreen(cx, cy) {
   const distance = Math.hypot(target3X - ball3X, target3Z - ball3Z) * distanceScale;
   updateDistanceReadout(distance);
   statusBar.className = 'sbar so';
-  statusBar.textContent = `📏 공 → 목표 거리: ${distance.toFixed(1)}m (평면 기준)`;
+  statusBar.textContent = `📏 현재 위치 → 목표 거리: ${distance.toFixed(1)}m (평면 기준)`;
   instrEl.textContent = '색상과 화살표는 1cm 표시 단계의 상대 굴곡 힌트입니다. 실제 cm 정확도를 뜻하지는 않습니다.';
 }
 
 function updateDistanceReadout(distance){
   const readout = document.getElementById('distance-readout');
   if(!readout) return;
-  readout.textContent = `📏 공 → 목표  ${distance.toFixed(1)}m`;
+  readout.textContent = `📏 현재 위치 → 목표  ${distance.toFixed(1)}m`;
   readout.classList.add('show');
 }
 
@@ -457,20 +405,19 @@ arEl.addEventListener('pointerdown', e => {
   if (!isDrag && measState !== 'step1_meas' && measState !== 'step2_meas') setTargetFromScreen(e.clientX, e.clientY);
 });
 
-// 3D 공 위치를 2D 화면 마커 좌표로 투영 (지면 고정)
-function updateBallMarkerScreenPos() {
-  const v = new THREE.Vector3(ball3X, 0.08, ball3Z);
-  v.project(cam3);
-  if (v.z < 1) {
-    const sx = v.x * (innerWidth / 2) + (innerWidth / 2);
-    const sy = -v.y * (innerHeight / 2) + (innerHeight / 2);
-    ballEl.style.left = `${sx}px`;
-    ballEl.style.top = `${sy}px`;
-    ballEl.style.display = (sx >= -60 && sx <= innerWidth + 60 && sy >= -60 && sy <= innerHeight + 60) ? 'flex' : 'none';
-  }
+// ── 높이 계산 (3D 실제 미터 좌표계 기준) ──────────────────────────────────
+function applyTerrainSensitivity(){
+  // 전후(pitch)와 좌우(roll) 기준 변화 모두를 같은 상대 경사 모델에 반영한다.
+  // ±0.25는 8m 격자에서 최대 약 2m의 상대 높이 차이를 뜻한다.
+  relativeSlopeP = Math.max(-0.25, Math.min(0.25, terrainBaseP * terrainSensitivity));
+  relativeSlopeR = Math.max(-0.25, Math.min(0.25, terrainBaseR * terrainSensitivity));
+  measuredSlopeP = relativeSlopeP;
+  measuredSlopeR = relativeSlopeR;
+  hasRelativeTerrainHint = Math.abs(relativeSlopeP) + Math.abs(relativeSlopeR) > 0.001;
+  updateSlopeCue();
+  computeHeights();
 }
 
-// ── 높이 계산 (3D 실제 미터 좌표계 기준) ──────────────────────────────────
 function computeHeights(){
   if(!geo) return;
   // cm 값이 아닌 색/방향 비교용 상대 굴곡이다. 시각 보조 외의 용도로 사용하지 않는다.
@@ -493,7 +440,7 @@ function applyMesh(){
       const idx=r*(DN+1)+c;
       const hm=heightsM[r][c];
       // 과도한 왜곡(EXAG=6.0)을 없애고 직관적인 현실 스케일로 적용
-      pos.setY(idx, Math.max(-0.18, Math.min(0.18, hm * 0.35)));
+      pos.setY(idx, Math.max(-0.80, Math.min(0.80, hm * 0.40)));
       const hcl=Math.max(-maxM,Math.min(maxM,hm));
       setColor(colors,idx,hcl*100);
     }
@@ -513,11 +460,11 @@ function updateSlopeCue(){
 }
 function setColor(a,i,hCm){
   // 색상 단계는 1cm 간격으로 양자화한다. 이는 상대 굴곡의 표시 해상도이며 실제 측정 정확도는 아니다.
-  const cm = Math.round(Math.max(-20, Math.min(20, hCm)));
+  const cm = Math.round(Math.max(-200, Math.min(200, hCm)));
   let r,g,b;
   if(cm === 0){ r=.06; g=.85; b=.45; }
-  else if(cm > 0){ const t=cm/20; r=.18+.76*t; g=.85-.58*t; b=.16-.10*t; }
-  else { const t=(-cm)/20; r=.02+.10*t; g=.88-.60*t; b=.95-.28*t; }
+  else if(cm > 0){ const t=cm/200; r=.18+.76*t; g=.85-.58*t; b=.16-.10*t; }
+  else { const t=(-cm)/200; r=.02+.10*t; g=.88-.60*t; b=.95-.28*t; }
   a[i*3]=r;a[i*3+1]=g;a[i*3+2]=b;
 }
 
@@ -540,7 +487,7 @@ function unfreezeFrame(){
 }
 
 // ── 단계 UI 업데이트 ──────────────────────────────────────────────────────
-const RANGE_LABELS=['±5cm','±10cm','±15cm','±30cm','±50cm'];
+const RANGE_LABELS=['±25cm','±50cm','±100cm','±150cm','±200cm'];
 
 function updateUI(){
   const s1=document.getElementById('s1'), s2=document.getElementById('s2'), s3=document.getElementById('s3');
@@ -551,9 +498,9 @@ function updateUI(){
     case 'step1_idle':
       s1.className='step-dot active'; s2.className='step-dot'; s3.className='step-dot';
       sl1.className='step-line'; sl2.className='step-line';
-      stepLbl.textContent='1단계: 공 위치 설정';
+      stepLbl.textContent='1단계: 현재 위치 기준 설정';
       btnMeas.className='meas-btn btn-idle';
-      btnMeas.textContent='🎯 공 위치 설정 완료';
+      btnMeas.textContent='🎯 현재 위치 기준 설정';
       btnMeas.disabled=false;
       statusBar.className='sbar sw';
       statusBar.textContent='⚠️ 평평한 지면에서 카메라를 지면으로 향하고 측정하세요';
@@ -604,7 +551,6 @@ function doMeasure(step, onDone){
   const ovCount=document.getElementById('ov-count');
   ovStep.textContent = step===1 ? '1단계: 평지 기준 교정' : '2단계: 현재 위치 측정';
   overlay.classList.add('show');
-  bRing.classList.add('pulse');
 
   let samples=[], rem=3;
   ovCount.textContent=rem;
@@ -615,7 +561,6 @@ function doMeasure(step, onDone){
     if(rem<=0){
       clearInterval(timer);
       overlay.classList.remove('show');
-      bRing.classList.remove('pulse');
       const ap=samples.reduce((s,x)=>s+x.p,0)/samples.length;
       const ar=samples.reduce((s,x)=>s+x.r,0)/samples.length;
       onDone(ap,ar);
@@ -645,13 +590,9 @@ btnMeas.addEventListener('click',()=>{
         const effDR = Math.abs(dr) < 0.8 ? 0 : dr;
         // 상대 굴곡 힌트: 숫자 높이 대신 방향과 색만 표시한다.
         // 기준 측정과 현재 측정 사이에 폰을 크게 돌리면 신뢰할 수 없으므로 작은 범위로 제한한다.
-        relativeSlopeP = Math.max(-0.09, Math.min(0.09, Math.tan(effDP * Math.PI / 180) * 0.22 * terrainSensitivity));
-        relativeSlopeR = Math.max(-0.09, Math.min(0.09, Math.tan(effDR * Math.PI / 180) * 0.22 * terrainSensitivity));
-        measuredSlopeP = relativeSlopeP;
-        measuredSlopeR = relativeSlopeR;
-        hasRelativeTerrainHint = Math.abs(relativeSlopeP) + Math.abs(relativeSlopeR) > 0.003;
-        updateSlopeCue();
-        computeHeights();
+        terrainBaseP = Math.tan(effDP * Math.PI / 180) * 0.012;
+        terrainBaseR = Math.tan(effDR * Math.PI / 180) * 0.012;
+        applyTerrainSensitivity();
         freezeFrame();
         measState='frozen'; updateUI();
       });
@@ -661,7 +602,7 @@ btnMeas.addEventListener('click',()=>{
       unfreezeFrame();
       measuredSlopeP = 0;
       measuredSlopeR = 0;
-      relativeSlopeP = 0; relativeSlopeR = 0; hasRelativeTerrainHint = false; updateSlopeCue();
+      terrainBaseP = 0; terrainBaseR = 0; relativeSlopeP = 0; relativeSlopeR = 0; hasRelativeTerrainHint = false; updateSlopeCue();
       computeHeights();
       measState='step2_idle'; updateUI();
       break;
@@ -696,7 +637,6 @@ function updateCam3(){
 function updateLabels(){
   if(!lblEl || !geo) return;
   lblEl.innerHTML='';
-  bTip.textContent='⚪ 공 위치 — 드래그해서 맞추세요';
   if(viewMode !== 'grid') return;
 
   // 격자 전체가 아닌 화면상 충분히 떨어진 9~16개 지점만 표기해 카메라 시야를 보존한다.
@@ -845,7 +785,7 @@ document.querySelectorAll('.vb').forEach(b=>b.addEventListener('click',e=>{
 document.getElementById('bs-').onclick=()=>{ distanceScale=Math.max(0.6, distanceScale-0.1); document.getElementById('sl-s').value=distanceScale; document.getElementById('v-s').textContent=`${distanceScale.toFixed(1)}x`; document.getElementById('v-s-dist').textContent=`${distanceScale.toFixed(1)}x`; updateDistanceRings(); };
 document.getElementById('bs+').onclick=()=>{ distanceScale=Math.min(1.5, distanceScale+0.1); document.getElementById('sl-s').value=distanceScale; document.getElementById('v-s').textContent=`${distanceScale.toFixed(1)}x`; document.getElementById('v-s-dist').textContent=`${distanceScale.toFixed(1)}x`; updateDistanceRings(); };
 document.querySelectorAll('.pst-btn').forEach(btn=>btn.onclick=()=>{ document.querySelectorAll('.pst-btn').forEach(x=>x.classList.remove('on')); btn.classList.add('on'); eyeH=parseInt(btn.dataset.h,10); document.getElementById('v-h').textContent=`${eyeH}cm`; });
-document.getElementById('btn-flat-reset').onclick=()=>{ ball3X=0; ball3Z=-3; target3X=null; target3Z=null; document.getElementById('distance-readout').classList.remove('show'); relativeSlopeP=0; relativeSlopeR=0; hasRelativeTerrainHint=false; updateSlopeCue(); computeHeights(); if(ball3DMesh) ball3DMesh.position.set(ball3X,0.12,ball3Z); if(ring3DMesh) ring3DMesh.position.set(ball3X,0.02,ball3Z); updateDistanceRings(); statusBar.className='sbar sw'; statusBar.textContent='⚠️ 공 마커를 실제 공 위치로 드래그하세요'; };
+document.getElementById('btn-flat-reset').onclick=()=>{ ball3X=0; ball3Z=0; target3X=null; target3Z=null; document.getElementById('distance-readout').classList.remove('show'); terrainBaseP=0; terrainBaseR=0; relativeSlopeP=0; relativeSlopeR=0; hasRelativeTerrainHint=false; updateSlopeCue(); computeHeights(); updateDistanceRings(); statusBar.className='sbar sw'; statusBar.textContent='⚠️ 현재 사용자의 위치를 거리 기준점(0m)으로 사용합니다'; };
 // 레전드 접기
 document.getElementById('leg-h').onclick=()=>{
   legend.classList.toggle('col');
@@ -856,7 +796,7 @@ document.getElementById('leg-h').onclick=()=>{
 document.getElementById('sl-s').oninput=e=>{
   terrainSensitivity=parseInt(e.target.value,10);
   document.getElementById('v-s').textContent=`${terrainSensitivity}x`;
-  if(hasRelativeTerrainHint) computeHeights();
+  applyTerrainSensitivity();
 };
 
 // 촬영 높이
