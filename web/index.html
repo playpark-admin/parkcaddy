@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>ParkCaddy AR - 파크골프 그린 지면 깊이 측정기</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&family=Pretendard:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./src/css/style.css">
+</head>
+<body class="ar-theme-dark">
+  <div id="app-container">
+    <!-- Camera Feed Video Viewport -->
+    <video id="camera-feed" autoplay playsinline muted></video>
+    
+    <!-- Simulation Canvas Fallback (Used when camera stream unavailable) -->
+    <canvas id="sim-canvas" class="hidden"></canvas>
+
+    <!-- 3D AR Overlay Canvas -->
+    <canvas id="ar-canvas"></canvas>
+
+    <!-- 2D Height Badges Overlay (-30cm, +50cm) -->
+    <div id="height-labels-layer"></div>
+
+    <!-- HUD Overlay Container -->
+    <main id="hud-overlay">
+      
+      <!-- Top HUD Header -->
+      <header class="hud-header">
+        <div class="hud-brand">
+          <div class="hud-logo-icon">⛳</div>
+          <div class="hud-brand-text">
+            <h1>PARK CADDY <span class="badge-ar">AR</span></h1>
+            <span class="hud-subtitle">Green Depth Reader & Scale System</span>
+          </div>
+        </div>
+
+        <div class="hud-status-bar">
+          <span id="status-cam" class="status-pill status-active">
+            <span class="status-dot"></span> CAM
+          </span>
+          <span id="status-gyro" class="status-pill status-active">
+            <span class="status-dot"></span> GYRO
+          </span>
+          <span id="status-mode" class="status-pill mode-highlight">3D GRID</span>
+        </div>
+      </header>
+
+      <!-- Side Quick Controls (Right side buttons) -->
+      <aside class="hud-side-actions">
+        <button id="btn-lock" class="hud-icon-btn" title="화면 고정 (Freeze)">
+          <span class="icon">🔒</span>
+          <span class="label">고정</span>
+        </button>
+        <button id="btn-flip-cam" class="hud-icon-btn" title="카메라 전환">
+          <span class="icon">📷</span>
+          <span class="label">전환</span>
+        </button>
+        <button id="btn-snapshot" class="hud-icon-btn" title="그린 스냅샷">
+          <span class="icon">📸</span>
+          <span class="label">캡처</span>
+        </button>
+        <button id="btn-sim-mode" class="hud-icon-btn" title="카메라/시뮬레이션">
+          <span class="icon">🎬</span>
+          <span class="label">데모</span>
+        </button>
+      </aside>
+
+      <!-- Realtime Slope & Elevation Telemetry Panel (Top-Left floating) -->
+      <section class="telemetry-card">
+        <div class="telemetry-header">
+          <span class="telemetry-title">지면 높낮이 (기준 위치 대비)</span>
+          <span class="telemetry-badge" id="slope-rating">완경사</span>
+        </div>
+        <div class="telemetry-grid">
+          <div class="tele-item">
+            <span class="tele-label">중앙 타겟 높이</span>
+            <span class="tele-val highlight-val" id="val-center-height">+12 cm</span>
+          </div>
+          <div class="tele-item">
+            <span class="tele-label">최저/최고 높이</span>
+            <span class="tele-val" id="val-min-max">-30 / +50cm</span>
+          </div>
+          <div class="tele-item">
+            <span class="tele-label">최대 고저차</span>
+            <span class="tele-val" id="val-elevation-diff">80 cm</span>
+          </div>
+          <div class="tele-item">
+            <span class="tele-label">최대 경사도</span>
+            <span class="tele-val" id="val-slope-deg">2.4°</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Physical Height Color Legend Bar (-50cm ~ 0cm ~ +50cm) -->
+      <div id="elevation-legend">
+        <div class="legend-bar-container">
+          <span class="legend-text">-50cm (낮음)</span>
+          <div class="legend-gradient"></div>
+          <span class="legend-text">+50cm (높음)</span>
+        </div>
+        <div class="legend-zero-mark">▲ 0cm (사용자 기준점)</div>
+      </div>
+
+      <!-- Center Crosshair Target Helper -->
+      <div id="ar-crosshair">
+        <div class="crosshair-ring"></div>
+        <div class="crosshair-dot"></div>
+        <span class="crosshair-guide" id="crosshair-height-text">타겟 높이: +12 cm</span>
+      </div>
+
+      <!-- Bottom Control Dashboard -->
+      <footer class="hud-footer">
+        
+        <!-- Mode Switcher Tabs -->
+        <div class="mode-tabs">
+          <button class="tab-btn active" data-mode="grid">
+            <span class="tab-icon">🌐</span> 3D 격자망 (태그)
+          </button>
+          <button class="tab-btn" data-mode="heatmap">
+            <span class="tab-icon">🔥</span> 깊이 히트맵
+          </button>
+          <button class="tab-btn" data-mode="contour">
+            <span class="tab-icon">〰️</span> 등고선 (Contour)
+          </button>
+        </div>
+
+        <!-- Collapsible Slider Drawer -->
+        <div class="control-panel">
+          
+          <div class="panel-row">
+            <div class="slider-group">
+              <label for="slider-amplitude">
+                <span>깊이 축척 (Scale)</span>
+                <span class="slider-value" id="val-amplitude">1.0x</span>
+              </label>
+              <input type="range" id="slider-amplitude" min="0.5" max="3.0" step="0.1" value="1.0">
+            </div>
+
+            <div class="slider-group">
+              <label for="slider-cam-height">
+                <span>카메라 높이 (Height)</span>
+                <span class="slider-value" id="val-cam-height">1.2 m</span>
+              </label>
+              <input type="range" id="slider-cam-height" min="0.8" max="2.0" step="0.1" value="1.2">
+            </div>
+          </div>
+
+          <div class="panel-row">
+            <div class="slider-group">
+              <label for="slider-density">
+                <span>격자 촘촘함</span>
+                <span class="slider-value" id="val-density">20 x 20</span>
+              </label>
+              <input type="range" id="slider-density" min="10" max="30" step="2" value="20">
+            </div>
+
+            <div class="select-group">
+              <label for="select-preset">지면 높낮이 프로필</label>
+              <select id="select-preset">
+                <option value="rolling">언듈레이션 (-30cm ~ +45cm)</option>
+                <option value="sloped_left">좌측 내리막 (-35cm ~ +25cm)</option>
+                <option value="sloped_right">우측 오르막 (-20cm ~ +40cm)</option>
+                <option value="valley">중앙 오목 (-30cm Valley)</option>
+                <option value="flat">평탄한 그린 (0cm Flat)</option>
+                <option value="live_sensor">자이로 센서 추적</option>
+              </select>
+            </div>
+          </div>
+
+        </div>
+      </footer>
+
+      <!-- Toast Notification -->
+      <div id="toast-message" class="toast hidden">
+        <span>📸 스냅샷이 저장되었습니다.</span>
+      </div>
+    </main>
+  </div>
+
+  <script type="module" src="./src/js/app.js"></script>
+</body>
+</html>
