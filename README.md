@@ -13,7 +13,7 @@
 | --- | --- | --- |
 | ground/ 공통 웹앱 | 카메라·GPS·사진 기록, 기기 저장, 동의 후 서버 전송·삭제, 오프라인 화면, 설정·디버그 | 사진 기록용. 브라우저에서 깊이 지형을 측정하지 않음 |
 | native/android | ARCore Raw Depth, 반복 프레임 필터, 6m 근거리 보기, 기준점, 설정·실시간 진단, 선택적 진단 ZIP | Depth 지원 기기 필요. 실제 고저 정확도 검증 전 |
-| native/ios | LiDAR sceneDepth·confidenceMap, 같은 세계좌표 반복 관측, 상대 거리·고저·35점 관측, 큰 UI·설정·디버그 | LiDAR 정밀 모드. 일반 iPhone은 사진/GPS 기록. Xcode 빌드 검증 필요 |
+| native/ios | LiDAR sceneDepth·confidenceMap, 같은 세계좌표 반복 관측, 상대 거리·고저·35점 관측, 큰 UI·설정·디버그 | LiDAR 정밀 모드. 일반 iPhone은 사진/GPS 기록. 시뮬레이터 빌드·13개 테스트 통과. 실기기 검증 별도 |
 | Firebase | 익명 로그인, 서울 리전 Firestore, 본인 기록만 접근, Hosting | 수집 상태만 저장. 3D 정합·다인 병합·자동 정밀도 향상은 후속 단계 |
 
 네이티브의 Firebase 업로드는 아직 연결되지 않았습니다. 서버 전송은 웹 앱에서 동의 후 실행합니다. 웹 사진은 최대 1280px JPEG(문자열 700,000자 제한)로 지면 상태 이력용이며 정밀 사진측량 원본이 아닙니다. 초기에는 별도 유료 Storage 없이 Firestore에 제한된 사진과 메타데이터를 함께 보관합니다. 대규모 수집 전 Cloud Storage, App Check, 남용 제한, 보관정책과 계정 복구를 보완해야 합니다.
@@ -51,7 +51,7 @@ cd native/android
 
 iOS: [native/ios/README.md](native/ios/README.md). macOS + Xcode + XcodeGen 필요. xcodegen generate 후 ParkCaddyAR scheme을 빌드합니다. 배포용 앱은 소유자의 서명과 실기기 검증이 필요합니다.
 
-GitHub Actions가 웹 수학 테스트, Android 빌드·검사, iOS 시뮬레이터 빌드·XCTest를 실행합니다. CI 결과는 작업별 실제 상태를 확인해야 하며 소스 작성만으로 통과했다고 보지 않습니다.
+GitHub Actions에서 코드 fefcbd3의 웹 수학 7개, Android 빌드·lint·호스트 9개, iOS 시뮬레이터 빌드·XCTest 13개가 통과했습니다. [검증 실행](https://github.com/playpark-admin/parkcaddy/actions/runs/36267925930). 실기기 센서·정밀도 검증과 배포 서명은 별도입니다.
 
 Firebase CLI 15.31.0 이상:
 ```sh

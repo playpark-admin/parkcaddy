@@ -14,3 +14,11 @@
 실제 잔디·햇빛·움직임·카메라 보정 조건에서 거리/높이 정밀도를 검증한 것은 아닙니다.
 가상 브라우저 센서는 iPhone Safari/Android Chrome 실제 하드웨어 검사를 대신하지 않습니다.
 Windows 로컬에 JDK17/Android SDK 및 Xcode가 없어 네이티브 APK 빌드/lint/iOS XCTest를 여기서 실행하지 않았습니다. GitHub Actions에서 별도 빌드 검증을 실행하도록 구성했습니다. 실제 상태는 Actions 결과를 확인합니다.
+
+## GitHub 원격 검증 완료
+코드 fefcbd33644cff1978790aacd47ae353dd3c3fc8 기준 [실행 결과](https://github.com/playpark-admin/parkcaddy/actions/runs/36267925930).
+- 웹 수학 7개 성공.
+- Android JDK17/SDK35: 9개 Java 호스트 검사, assembleDebug, lintDebug 성공. 테스트 APK 생성.
+- iOS Xcode16.4: unsigned simulator build 성공, XCTest 실제 13개 실행·실패 0.
+- 실제 배포 URL에서도 가상 사진·위치로 동의/전송/접근제어/삭제 검증 성공.
+- Windows 로컬 미실행 제한은 원격 빌드로 보완했습니다. 실기기와 현장 정확도 검증은 여전히 별도입니다.
