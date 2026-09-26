@@ -1,0 +1,211 @@
+name: Ground v2 checks
+
+on:
+  push:
+    branches: [feature/ground-v2]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  web:
+    name: Web measurement and consent tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Run web calculation tests
+        run: node --test ground/tests/*.test.mjs
+
+  android:
+    name: Android SDK build, lint and host tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+        working-directory: native/android
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+          cache-dependency-path: |
+            native/android/**/*.gradle
+            native/android/gradle.properties
+            native/android/gradle/wrapper/gradle-wrapper.properties
+      - name: Set up Android command-line tools and SDK 35
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          # v16 is included in the upstream Ubuntu 24.04 / JDK 17 test matrix.
+          cmdline-tools-version: '12266719'
+          log-accepted-android-sdk-licenses: 'false'
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+      - name: Verify Android SDK installation
+        run: |
+          java -version
+          command -v sdkmanager
+          test -n "$ANDROID_HOME"
+          test -f "$ANDROID_HOME/platforms/android-35/android.jar"
+          test -x "$ANDROID_HOME/build-tools/35.0.0/aapt2"
+      - name: Run framework-independent Java checks
+        run: |
+          output="$RUNNER_TEMP/parkcaddy-host-tests"
+          mkdir -p "$output"
+          source_root="app/src/main/java/app/playpark/parkcaddy"
+          names=(ScanProgress CloudRecordQueue DepthGeometry GridDisplayPolicy MeasurementPolicy MeasurementRecorder RangePolicy ReferenceWindow StableHeight StickyLabels TerrainMath TrackingGuide)
+          sources=()
+          for name in "${names[@]}"; do
+            sources+=("$source_root/$name.java")
+          done
+          javac -encoding UTF-8 -d "$output" "${sources[@]}" tests/*.java
+          for test in tests/*.java; do
+            name="$(basename "$test" .java)"
+            java "-Djava.io.tmpdir=$output" -cp "$output" "app.playpark.parkcaddy.$name"
+          done
+      - name: Build debug APK, run lint and Gradle unit tests
+        run: |
+          # bash avoids relying on executable mode preserved from Windows.
+          bash ./gradlew --no-daemon --stacktrace \
+            :app:assembleDebug :app:lintDebug :app:testDebugUnitTest
+      - name: Upload debug APK
+        if: ${{ success() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: parkcaddy-android-debug
+          path: native/android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload Android validation reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: parkcaddy-android-reports
+          path: |
+            native/android/app/build/reports/
+            native/android/app/build/test-results/
+          if-no-files-found: warn
+          retention-days: 14
+
+  ios:
+    name: iOS unsigned simulator build and XCTest
+    runs-on: macos-15
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+        working-directory: native/ios
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Prepare XcodeGen project
+        run: |
+          brew install xcodegen
+          xcodebuild -version
+          xcodegen generate --spec project.yml
+      - name: Build unsigned iOS Simulator app
+        run: |
+          xcodebuild \
+            -project ParkCaddyAR.xcodeproj \
+            -scheme ParkCaddyAR \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/ParkCaddyDerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            build | tee "$RUNNER_TEMP/parkcaddy-ios-build.log"
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$RUNNER_TEMP/ParkCaddyDerivedData/Build/Products/Debug-iphonesimulator/ParkCaddyAR.app" \
+            "$RUNNER_TEMP/ParkCaddyAR-simulator-unsigned.zip"
+      - name: Select an available iPhone simulator
+        id: simulator
+        run: |
+          xcrun simctl list devices available --json > "$RUNNER_TEMP/parkcaddy-simulators.json"
+          sdk_version="$(xcrun --sdk iphonesimulator --show-sdk-version)"
+          python3 - "$RUNNER_TEMP/parkcaddy-simulators.json" "$GITHUB_OUTPUT" "$sdk_version" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as source:
+              devices = json.load(source)["devices"]
+          sdk_major = sys.argv[3].split(".")[0]
+          prefix = "com.apple.CoreSimulator.SimRuntime.iOS-" + sdk_major + "-"
+          candidates = [
+              device
+              for runtime, group in sorted(devices.items(), reverse=True)
+              if runtime.startswith(prefix)
+              for device in group
+              if device.get("isAvailable") and device["name"].startswith("iPhone")
+          ]
+          if not candidates:
+              raise SystemExit("No available iPhone simulator matches the selected Xcode iOS SDK.")
+          chosen = candidates[0]
+          print("Using " + chosen["name"] + " (" + chosen["udid"] + ")")
+          with open(sys.argv[2], "a", encoding="utf-8") as output:
+              print("id=" + chosen["udid"], file=output)
+          PY
+      - name: Run geometry and repeated-observation XCTest
+        env:
+          SIMULATOR_ID: ${{ steps.simulator.outputs.id }}
+        run: |
+          xcrun simctl bootstatus "$SIMULATOR_ID" -b
+          xcodebuild \
+            -project ParkCaddyAR.xcodeproj \
+            -scheme ParkCaddyAR \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+            -destination-timeout 120 \
+            -derivedDataPath "$RUNNER_TEMP/ParkCaddyDerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/ParkCaddyAR-tests.xcresult" \
+            -parallel-testing-enabled NO \
+            -only-testing:ParkCaddyARTests \
+            CODE_SIGNING_ALLOWED=NO \
+            test | tee "$RUNNER_TEMP/parkcaddy-ios-tests.log"
+      - name: Upload unsigned simulator app
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: parkcaddy-ios-simulator-unsigned
+          path: ${{ runner.temp }}/ParkCaddyAR-simulator-unsigned.zip
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Upload iOS build and test reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: parkcaddy-ios-reports
+          path: |
+            ${{ runner.temp }}/parkcaddy-ios-build.log
+            ${{ runner.temp }}/parkcaddy-ios-tests.log
+            ${{ runner.temp }}/ParkCaddyAR-tests.xcresult
+          if-no-files-found: warn
+          retention-days: 14
+      - name: State simulator validation scope
+        if: ${{ always() }}
+        run: |
+          echo "### iOS validation scope" >> "$GITHUB_STEP_SUMMARY"
+          echo "The app artifact is unsigned and only runs in an iOS Simulator." >> "$GITHUB_STEP_SUMMARY"
+          echo "XCTest checks calculation logic. Camera, LiDAR, tracking, GPS and field accuracy still require physical-device validation." >> "$GITHUB_STEP_SUMMARY"

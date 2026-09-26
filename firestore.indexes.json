@@ -1,0 +1,15 @@
+{
+  "indexes": [],
+  "fieldOverrides": [
+    {
+      "collectionGroup": "observations",
+      "fieldPath": "image",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "observations",
+      "fieldPath": "metadata",
+      "indexes": []
+    }
+  ]
+}

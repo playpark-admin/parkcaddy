@@ -1,0 +1,76 @@
+rules_version = '2';
+service cloud.firestore {
+ match /databases/{database}/documents {
+  function own(uid) { return request.auth != null && request.auth.uid == uid; }
+  match /users/{uid}/observations/{recordId} {
+   // Raw photos and locations are visible only to trusted IAM administrators.
+   allow read: if false;
+   allow delete: if own(uid);
+   allow create, update: if own(uid)
+    && !exists(/databases/$(database)/documents/users/$(uid)/observationDeletions/$(recordId))
+    && request.resource.data.keys().hasOnly(['schemaVersion','ownerUid','metadata','image','status','consentVersion','updatedAt'])
+    && request.resource.data.schemaVersion == 2
+    && request.resource.data.ownerUid == uid
+    && request.resource.data.status == 'collected'
+    && request.resource.data.consentVersion == '2026-09-27-v2'
+    && request.resource.data.updatedAt == request.time
+    && request.resource.data.image is string
+    && request.resource.data.image.size() < 700001
+    && request.resource.data.image.matches('data:image/jpeg;base64,.*')
+    && request.resource.data.metadata is map
+    && request.resource.data.metadata.id == recordId
+    && request.resource.data.metadata.terrainMeasured == false
+    && request.resource.data.metadata.collectionConsent is map
+    && request.resource.data.metadata.collectionConsent.version == '2026-09-27-v2'
+    && request.resource.data.metadata.collectionConsent.grantId is string
+    && request.resource.data.metadata.collectionConsent.grantId.size() > 0
+    && request.resource.data.metadata.collectionConsent.grantId.size() <= 128
+    && request.resource.data.metadata.course is string
+    && request.resource.data.metadata.course.size() <= 80
+    && (request.resource.data.metadata.hole == null
+      || (request.resource.data.metadata.hole is int
+       && request.resource.data.metadata.hole >= 1
+       && request.resource.data.metadata.hole <= 36));
+  }
+  match /users/{uid}/measurements/{recordId} {
+   allow read: if false;
+   allow delete: if own(uid);
+   allow create, update: if own(uid)
+    && !exists(/databases/$(database)/documents/users/$(uid)/measurementDeletions/$(recordId))
+    && request.resource.data.keys().hasOnly(['schemaVersion','platform','createdAt','consentVersion','metadata'])
+    && request.resource.data.schemaVersion == 1
+    && request.resource.data.platform in ['android','ios','webxr']
+    && request.resource.data.createdAt is string
+    && request.resource.data.createdAt.size() > 0
+    && request.resource.data.createdAt.size() <= 40
+    && ((request.resource.data.platform in ['android','ios']
+       && request.resource.data.consentVersion == '2026-09-27-native-v1')
+      || (request.resource.data.platform == 'webxr'
+       && request.resource.data.consentVersion == '2026-09-27-v2'
+       && request.resource.data.metadata.source == 'webxr-depth'
+       && request.resource.data.metadata.terrainMeasured == true
+       && request.resource.data.metadata.collectionConsent.version == '2026-09-27-v2'
+       && request.resource.data.metadata.collectionConsent.grantId is string
+       && request.resource.data.metadata.collectionConsent.grantId.size() > 0
+       && request.resource.data.metadata.collectionConsent.grantId.size() <= 128))
+    && request.resource.data.metadata is map
+    && request.resource.data.metadata.size() <= 40
+    && request.resource.data.metadata.accuracyValidated == false;
+  }
+  // Minimal deletion receipts contain no image, location, or measurement.
+  // Clients cannot remove them and resurrect a deleted record.
+  match /users/{uid}/observationDeletions/{recordId} {
+   allow read, delete: if false;
+   allow create, update: if own(uid)
+    && request.resource.data.keys().hasOnly(['deleted'])
+    && request.resource.data.deleted == true;
+  }
+  match /users/{uid}/measurementDeletions/{recordId} {
+   allow read, delete: if false;
+   allow create, update: if own(uid)
+    && request.resource.data.keys().hasOnly(['deleted'])
+    && request.resource.data.deleted == true;
+  }
+  match /terrain/{terrainId} { allow read: if request.auth != null && resource.data.status == 'verified'; allow write: if false; }
+ }
+}

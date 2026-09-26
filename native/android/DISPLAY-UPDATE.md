@@ -1,3 +1,5 @@
+> Historical implementation notes. For current v2 behavior and validation status, see [GROUND-V2.md](GROUND-V2.md).
+
 # Distance-adaptive display (2026-09-12)
 
 - Rendering retains the existing 25 cm measurement grid and distance scale.

@@ -16,5 +16,6 @@ final class ReferenceWindow {
   if(count<12||now-first<1500)return false;
   float[] a=Arrays.copyOf(heights,count);Arrays.sort(a);return a[count-2]-a[1]<=.03f;
  }
+ int observationCount(long now){return count>0&&now>=last&&now-last<=1000?count:0;}
  float median(){if(count==0)return 0;float[] a=Arrays.copyOf(heights,count);Arrays.sort(a);return a[count/2];}
 }

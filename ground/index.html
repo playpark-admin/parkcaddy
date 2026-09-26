@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#101a19" />
+    <title>그라운드 자동 스캔 · 파크캐디</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main id="capture" aria-label="그라운드 자동 측정">
+      <canvas
+        id="terrain-overlay"
+        aria-label="실제 관측한 지면 그리드"
+      ></canvas>
+      <div id="placeholder">
+        발 앞의 잔디를 비춰 주세요.<br />스캔이 시작되면 지면을 자동으로
+        관측합니다.
+      </div>
+      <header class="camera-header">
+        <button id="stop" class="glass" aria-label="그라운드 확인 닫기">
+          ‹ 닫기
+        </button>
+        <div class="camera-title">
+          <h1>그라운드 확인</h1>
+          <span id="context-label">구장 · 홀 미지정</span>
+        </div>
+        <button id="settings-open" class="glass">⚙ 설정</button>
+      </header>
+      <div class="readouts" id="readouts" hidden>
+        <div>
+          <span>기준 대비 높이</span><strong id="height-output">—</strong
+          ><small>중앙 근처 관측점</small>
+        </div>
+        <div>
+          <span>수평 거리</span><strong id="distance">—</strong
+          ><small id="distance-quality">반복 관측 확인 중</small>
+        </div>
+      </div>
+      <div class="reticle" aria-hidden="true" hidden></div>
+      <section id="support-panel" hidden>
+        <h2>깊이 측정 지원이 필요해요</h2>
+        <p id="support-message"></p>
+        <a
+          class="secondary"
+          id="android-app"
+          href="https://github.com/playpark-admin/parkcaddy/releases/download/ground-v2.2-preview/parkcaddy-ground-android.apk"
+          download
+          >Android 측정 앱 받기</a
+        >
+        <p class="help">
+          iPhone은 LiDAR 지원 기기의 전용 앱이 필요합니다. 현재 iOS 실기기 배포
+          서명은 준비되지 않았습니다.
+        </p>
+      </section>
+      <footer class="camera-footer">
+        <div id="scan-status" aria-live="off">
+          <strong id="scan-phase" role="status" aria-live="polite"
+            >지원 여부를 확인하고 있어요</strong
+          ><progress
+            id="scan-progress"
+            aria-label="측정 관측 진행"
+            max="1"
+          ></progress>
+          <p id="scan-detail">실제 깊이 데이터를 확인합니다</p>
+        </div>
+        <button id="start" class="primary" disabled>스캔 시작</button>
+      </footer>
+    </main>
+    <div id="notice" role="status" aria-live="polite"></div>
+    <dialog id="settings" aria-labelledby="settings-title">
+      <form id="settings-form">
+        <div class="sheet-header">
+          <h2 id="settings-title">설정</h2>
+          <button id="settings-close" type="button" class="secondary">
+            닫기
+          </button>
+        </div>
+        <details open>
+          <summary>측정 범위 · 기본 높이 조건</summary>
+          <div class="section-body">
+            <p class="help">
+              자동 기준점은 반복 관측한 지면 후보에서 잡습니다. 아래 높이는
+              휴대폰 아래의 지면 후보를 고르는 조건이며, 측정된 깊이에 곱하는
+              보정값이 아닙니다.
+            </p>
+            <div class="fields">
+              <label
+                >카메라 높이 최소 (m)<input
+                  name="minCameraHeightM"
+                  type="number"
+                  min="0.3"
+                  max="2.2"
+                  step="0.1"
+                  required /></label
+              ><label
+                >카메라 높이 최대 (m)<input
+                  name="maxCameraHeightM"
+                  type="number"
+                  min="0.5"
+                  max="2.5"
+                  step="0.1"
+                  required
+              /></label>
+            </div>
+            <label
+              >관측 거리 상한<select name="maxRangeM">
+                <option value="3">3 m · 가까운 지면</option>
+                <option value="5">5 m · 넓게 관찰</option>
+              </select></label
+            >
+            <p class="help">
+              평평하게 보이는 물체를 지면으로 오인할 가능성은 남습니다. 사람이
+              서 있는 지면을 비추세요. 설정을 바꾸면 새 기준점부터 자동
+              관측합니다.
+            </p>
+            <button id="reset-scan" type="button" class="secondary">
+              기준점부터 다시 스캔
+            </button>
+          </div>
+        </details>
+        <details id="display-settings">
+          <summary>화면과 안내</summary>
+          <div class="section-body">
+            <label class="switch"
+              >측정 그리드 표시<input name="grid" type="checkbox" /></label
+            ><label class="switch"
+              >더 큰 글씨<input name="largeText" type="checkbox" /></label
+            ><label class="switch"
+              >상태 변경 음성 안내<input name="voice" type="checkbox" /></label
+            ><label class="switch"
+              >첫 측정 완료 시 진동<input name="haptic" type="checkbox"
+            /></label>
+          </div>
+        </details>
+        <details id="context-settings">
+          <summary>구장 · 홀 정보</summary>
+          <div class="section-body">
+            <p class="help">
+              현재는 독립 실행입니다. 스코어카드의 구장·코스·홀 연결은 후속
+              단계입니다.
+            </p>
+            <label
+              >구장 이름<input
+                id="course"
+                maxlength="80"
+                placeholder="미지정" /></label
+            ><label
+              >홀 번호<select id="hole">
+                <option value="">미지정</option>
+              </select></label
+            >
+          </div>
+        </details>
+        <details id="analysis">
+          <summary>정밀도 분석 · 실제 관측 데이터</summary>
+          <div class="section-body">
+            <dl class="metrics">
+              <dt>스캔 상태</dt>
+              <dd id="scan-state-data">대기</dd>
+              <dt>서로 다른 깊이 관측</dt>
+              <dd id="frame-data">0개</dd>
+              <dt>관측점 반복 조건</dt>
+              <dd id="sample-data">—</dd>
+              <dt>관측 이동폭</dt>
+              <dd id="baseline-data">—</dd>
+              <dt>통과한 격자</dt>
+              <dd id="cell-data">0개</dd>
+              <dt>격자 간격</dt>
+              <dd>25 cm</dd>
+              <dt>높이 반복 MAD</dt>
+              <dd id="spread-data">—</dd>
+              <dt>카메라 기준면 높이</dt>
+              <dd id="camera-height-data">—</dd>
+              <dt>GPS</dt>
+              <dd id="gps-status">미수집</dd>
+            </dl>
+            <p class="help">
+              진행 표시는 실제 관측량과 이동 조건에 따른 것입니다. 100%는 절대
+              정확도가 100%라는 뜻이 아닙니다. MAD는 반복값의 중앙절대편차이며
+              실제 cm 정확도나 신뢰구간이 아닙니다.
+            </p>
+            <details>
+              <summary>원시 데이터 · 계산 입력</summary>
+              <pre id="debug-data"></pre>
+            </details>
+            <button id="export-diagnostics" type="button" class="secondary">
+              진단값 내보내기
+            </button>
+          </div>
+        </details>
+        <details id="principles">
+          <summary>자동 스캔 원리 · 정밀도의 한계</summary>
+          <div class="section-body prose">
+            <h3>실제 깊이로 지면 복원</h3>
+            <code>p_world = R · (z K⁻¹ [u v 1]ᵀ) + t</code>
+            <p>
+              카메라 깊이와 촬영 자세를 같은 시각으로 결합합니다. 지면 후보의
+              법선과 높이 조건을 확인한 뒤 기준점을 잡습니다. 기준면 대비 높이와
+              수평 거리를 계산하여 관측한 격자만 연결합니다.
+            </p>
+            <h3>자동 반복 관측</h3>
+            <p>
+              서로 다른 깊이 프레임을 비교하고, 충분한 관측 시간·시점 이동·반복
+              안정성이 확인된 지점부터 숫자를 표시합니다. 미관측 영역을 임의의
+              굴곡으로 채우지 않습니다. 추적이 끊기거나 값이 오래되면 숫자를
+              숨기고 다시 관측합니다.
+            </p>
+            <code>Var(평균) = σ²[1 + (N − 1)ρ] / N</code>
+            <p>
+              표본 분산이 같고 모든 표본 쌍의 상관이 ρ라는 조건의 식입니다. 독립
+              표본의 무작위 오차만 1/√N로 감소하며, 렌즈·깊이·기준점의 공통
+              편향은 반복만으로 없어지지 않습니다.
+            </p>
+            <h3>거리·높이의 의미</h3>
+            <code
+              >Δh = y_target − y_reference<br />d = √((x_target − x_camera)² +
+              (z_target − z_camera)²)</code
+            >
+            <p>
+              웹 AR의 거리는 카메라 아래 위치와 관측점 사이의 수평 거리입니다.
+              표시 높이는 최초 기준 지면과의 상대값입니다. 소수점 표시나
+              매끄러운 격자가 실제 정확도를 보장하지 않습니다.
+            </p>
+            <h3>공동 자료의 활용</h3>
+            <p>
+              GPS는 장소 검색에 사용합니다. 여러 사람의 관측은 공통
+              기준점·척도·좌표계로 정합해야 결합할 수 있습니다. 현재 서버는
+              자료를 수집하며 지형을 자동 통합하지 않습니다.
+            </p>
+            <p>
+              <a
+                href="https://www.w3.org/TR/webxr-depth-sensing-1/"
+                target="_blank"
+                rel="noopener"
+                >WebXR 깊이 정의</a
+              >
+              ·
+              <a
+                href="https://developers.google.com/ar/develop/depth"
+                target="_blank"
+                rel="noopener"
+                >ARCore 깊이 원리</a
+              >
+            </p>
+          </div>
+        </details>
+        <details id="privacy">
+          <summary>데이터 제공 · 동의 관리</summary>
+          <div class="section-body">
+            <p id="collection-state"></p>
+            <p class="help">
+              동의 후 확인된 측정수치·관측 품질·위치는 최대 30초에 한 번 자동
+              전송합니다. 웹 AR에서는 카메라 원본 사진을 전송하지 않습니다.
+              관리자만 원자료를 볼 수 있습니다. 이전 버전의 사진 대기열은 해당
+              촬영 때의 동의에 따라 처리합니다.
+            </p>
+            <button id="collection-enable" type="button" class="secondary">
+              데이터 제공 안내 보기</button
+            ><button id="collection-revoke" type="button" class="secondary">
+              앞으로 데이터 제공 중지</button
+            ><button id="collection-delete" type="button" class="secondary">
+              제공 중지 및 서버 데이터 삭제
+            </button>
+            <p class="help">
+              삭제한 자료의 재전송을 막는 최소 ID 삭제표식만 서버에 남습니다.
+              익명 계정의 기기 데이터를 지우면 기존 서버 자료의 삭제 권한을 잃을
+              수 있습니다.
+            </p>
+            <p id="collection-detail" class="help"></p>
+          </div>
+        </details>
+        <div class="sheet-actions">
+          <button type="submit" class="primary">설정 저장</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="consent" aria-labelledby="consent-title">
+      <h2 id="consent-title">그라운드 데이터 제공</h2>
+      <p>
+        자동 스캔으로 측정한 높이·거리·관측 품질·위치·구장과 홀·기기 정보를
+        연구용으로 제공하시나요?
+      </p>
+      <p>
+        동의하면 충분한 관측이 모인 후 별도 조작 없이 관리자 서버로 전송합니다.
+        현재 웹 AR은 원본 카메라 사진을 전송하지 않습니다. 지형 정합·공동 지도
+        생성은 후속 개발 단계입니다.
+      </p>
+      <p class="help">
+        선택 사항이며 거부해도 측정할 수 있습니다. 설정에서 제공 중지·서버
+        데이터 삭제를 할 수 있습니다. 브라우저 데이터를 지우면 익명 계정의 기존
+        자료를 직접 삭제할 수 없을 수 있습니다.
+      </p>
+      <div class="consent-actions">
+        <button id="consent-decline" class="secondary">동의하지 않음</button
+        ><button id="consent-accept" class="primary">동의하고 계속</button>
+      </div>
+    </dialog>
+    <script type="module" src="app.mjs"></script>
+  </body>
+</html>
