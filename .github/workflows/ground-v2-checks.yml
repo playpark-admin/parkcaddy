@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 defaults:
@@ -55,10 +55,20 @@ jobs:
             native/android/**/*.gradle
             native/android/gradle.properties
             native/android/gradle/wrapper/gradle-wrapper.properties
-      - name: Install Android SDK 35
+      - name: Set up Android command-line tools and SDK 35
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          # v16 is included in the upstream Ubuntu 24.04 / JDK 17 test matrix.
+          cmdline-tools-version: '12266719'
+          log-accepted-android-sdk-licenses: 'false'
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+      - name: Verify Android SDK installation
         run: |
-          sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
+          java -version
+          command -v sdkmanager
+          test -n "$ANDROID_HOME"
           test -f "$ANDROID_HOME/platforms/android-35/android.jar"
+          test -x "$ANDROID_HOME/build-tools/35.0.0/aapt2"
       - name: Run framework-independent Java checks
         run: |
           output="$RUNNER_TEMP/parkcaddy-host-tests"

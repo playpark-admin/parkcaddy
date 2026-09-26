@@ -139,12 +139,18 @@ final class TerrainSession: NSObject, ObservableObject, ARSessionDelegate {
         let screenPoints: [CGPoint]
         if kind == .grid {
             let size = sceneView.bounds.size
-            screenPoints = (0..<5).flatMap { row in
-                (0..<7).map { column in
-                    CGPoint(x: size.width * CGFloat(0.2 + Double(column) * 0.1),
-                            y: size.height * CGFloat(0.30 + Double(row) * 0.07))
+            var gridPoints: [CGPoint] = []
+            gridPoints.reserveCapacity(35)
+            for row in 0..<5 {
+                let rowFraction: CGFloat = 0.30 + CGFloat(row) * 0.07
+                let screenY: CGFloat = size.height * rowFraction
+                for column in 0..<7 {
+                    let columnFraction: CGFloat = 0.20 + CGFloat(column) * 0.10
+                    let screenX: CGFloat = size.width * columnFraction
+                    gridPoints.append(CGPoint(x: screenX, y: screenY))
                 }
             }
+            screenPoints = gridPoints
         } else { screenPoints = [crosshair] }
         var report = reader.diagnostics
         var targets: [BurstTarget] = []
