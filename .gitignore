@@ -24,3 +24,7 @@
 **/.ipynb_checkpoints/
 **/DerivedData/
 **/xcuserdata/
+
+**/firebase-debug*.log
+**/.firebase/
+**/.verification/

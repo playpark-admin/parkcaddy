@@ -1,0 +1,29 @@
+rules_version = '2';
+service cloud.firestore {
+ match /databases/{database}/documents {
+  function own(uid) { return request.auth != null && request.auth.uid == uid; }
+  match /users/{uid}/observations/{recordId} {
+   allow read, delete: if own(uid);
+   allow create, update: if own(uid)
+    && request.resource.data.keys().hasOnly(['schemaVersion','ownerUid','metadata','image','status','consentVersion','updatedAt'])
+    && request.resource.data.schemaVersion == 2
+    && request.resource.data.ownerUid == uid
+    && request.resource.data.status == 'collected'
+    && request.resource.data.consentVersion == '2026-09-27-v1'
+    && request.resource.data.updatedAt == request.time
+    && request.resource.data.image is string
+    && request.resource.data.image.size() < 700001
+    && request.resource.data.image.matches('data:image/jpeg;base64,.*')
+    && request.resource.data.metadata is map
+    && request.resource.data.metadata.id == recordId
+    && request.resource.data.metadata.terrainMeasured == false
+    && request.resource.data.metadata.course is string
+    && request.resource.data.metadata.course.size() > 0
+    && request.resource.data.metadata.course.size() <= 80
+    && request.resource.data.metadata.hole is int
+    && request.resource.data.metadata.hole >= 1
+    && request.resource.data.metadata.hole <= 36;
+  }
+  match /terrain/{terrainId} { allow read: if request.auth != null && resource.data.status == 'verified'; allow write: if false; }
+ }
+}

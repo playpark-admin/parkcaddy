@@ -1,0 +1,18 @@
+{
+  "name": "파크캐디 그라운드 노트",
+  "short_name": "파크캐디",
+  "lang": "ko",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f5f5ed",
+  "theme_color": "#163e30",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

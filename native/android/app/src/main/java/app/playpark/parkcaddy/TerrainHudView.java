@@ -9,7 +9,7 @@ final class TerrainHudView extends View {
  private final StickyLabels sticky=new StickyLabels();
  void resetLabels(){sticky.clear();}
  private Scene scene=new Scene(new ArrayList<>());
- int bottomInset; boolean grid=true,heat=true;float sensitivity=2;
+ int bottomInset; boolean grid=true,heat=true,reference=false,largeLabels=true;float sensitivity=2;
  private final Paint paint=new Paint(3);
  private final Path fill=new Path();
  private final android.graphics.DashPathEffect dash=new android.graphics.DashPathEffect(new float[]{8,9},0);
@@ -20,7 +20,7 @@ final class TerrainHudView extends View {
  private int color(float h,float threshold){if(Math.abs(h)<=threshold)return 0x407FAD9A;float v=Math.min(1,(float)Math.sqrt((Math.abs(h)-threshold)/2)*sensitivity);return Color.HSVToColor(100,new float[]{h>=0?150*(1-v):150+80*v,.9f,1});}
  protected void onDraw(Canvas canvas){
  Scene s=scene;if(android.os.SystemClock.elapsedRealtime()-debugTime>3000){debugTime=android.os.SystemClock.elapsedRealtime();android.util.Log.d("ParkCaddyHud","draw nodes="+s.nodes.size()+" size="+getWidth()+"x"+getHeight()+" grid="+grid); }paint.setStrokeWidth(2*getResources().getDisplayMetrics().density);
- for(Node a:s.nodes.values()){
+ for(Node a:s.nodes.values()){if(!reference&&!a.known)continue;
  Node b=s.nodes.get((a.ix+a.step)+":"+a.iz),c=s.nodes.get(a.ix+":"+(a.iz+a.step)),d=s.nodes.get((a.ix+a.step)+":"+(a.iz+a.step));
  if(heat&&a.known&&b!=null&&b.known&&c!=null&&c.known&&d!=null&&d.known){Path p=fill;p.reset();p.moveTo(x(a),y(a));p.lineTo(x(b),y(b));p.lineTo(x(d),y(d));p.lineTo(x(c),y(c));p.close();paint.setColor(color((a.height+b.height+c.height+d.height)/4,Math.max(Math.max(a.deadband,b.deadband),Math.max(c.deadband,d.deadband))));canvas.drawPath(p,paint);}
  if(grid){
@@ -35,11 +35,11 @@ final class TerrainHudView extends View {
  }
 private void drawLabels(Canvas canvas, Scene s) {
  float density=getResources().getDisplayMetrics().density;
- float text=12*getResources().getDisplayMetrics().scaledDensity;
+ float text=(largeLabels?18:14)*getResources().getDisplayMetrics().scaledDensity;
  paint.setTextSize(text);paint.setTextAlign(Paint.Align.CENTER);paint.setTypeface(Typeface.DEFAULT_BOLD);
- float boxWidth=paint.measureText("높이 ≈ -200 cm")+24*density, boxHeight=text*3.8f;
+ float boxWidth=Math.max(paint.measureText("높이 ≈ -200 cm"),paint.measureText("높이 재측정 필요"))+24*density, boxHeight=text*3.8f;
  ArrayList<Node> visible=new ArrayList<>();
- for(Node n:s.nodes.values()){
+ for(Node n:s.nodes.values()){if(!reference&&!n.known)continue;
    float px=x(n),py=y(n);
    if(px>boxWidth/2+8*density&&px<getWidth()-boxWidth/2-8*density
        &&py>60*density+boxHeight&&py<getHeight()-bottomInset-12*density)visible.add(n);
@@ -54,7 +54,7 @@ private void drawLabels(Canvas canvas, Scene s) {
    Node n=visible.get(i);float px=x(n),py=y(n);
    paint.setColor(0xDF071920);canvas.drawRoundRect(px-boxWidth/2,py-boxHeight,px+boxWidth/2,py,8*density,8*density,paint);
    paint.setColor(Color.WHITE);
-   canvas.drawText(String.format(Locale.KOREA,n.known?"%.1f m":"≈%.1f m",distances[i]),px,py-boxHeight+text*1.1f,paint);
+   canvas.drawText(String.format(Locale.KOREA,"≈%.1f m",distances[i]),px,py-boxHeight+text*1.1f,paint);
    paint.setColor(n.known?0xFF87F1D1:0xFFB8C1C6);
    canvas.drawText(n.uncertain?"높이 재측정 필요":GridDisplayPolicy.heightLabel(n.height,n.known),px,py-boxHeight+text*2.25f,paint);
    paint.setTextSize(text*.78f);paint.setColor(0xFFC0CFD3);
@@ -64,7 +64,7 @@ private void drawLabels(Canvas canvas, Scene s) {
  }
 }
 private void edge(Canvas canvas,Node a,Node b){
- boolean known=a.known&&b.known;
+ boolean known=a.known&&b.known;if(!known&&!reference)return;
  paint.setColor(known?0xE023E9CA:0x709AAAB0);paint.setPathEffect(known?null:dash);
  canvas.drawLine(x(a),y(a),x(b),y(b),paint);paint.setPathEffect(null);
 }

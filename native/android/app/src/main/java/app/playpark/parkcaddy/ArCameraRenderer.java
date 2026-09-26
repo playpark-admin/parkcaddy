@@ -8,8 +8,16 @@ final class ArCameraRenderer implements GLSurfaceView.Renderer {
  interface Listener {void update(TerrainHudView.Scene scene,String message);}
  private final Listener listener;
  volatile MeasurementRecorder recorder;private int segment;private long lastTelemetry,lastStatusRecord;private String lastRecordedStatus="";
- volatile Session session; volatile int rotation; volatile boolean resetRequested; volatile int rangeMeters=15;
+ volatile Session session; volatile int rotation; volatile boolean resetRequested; volatile int rangeMeters=6;
  private int width,height,texture,program; private Anchor anchor;
+ private MeasurementPolicy policy=new MeasurementPolicy(false),pendingPolicy;
+ volatile String debugInfo="AR 세션 준비 중 · 아직 관측된 깊이 없음";
+ private int depthWidth,depthHeight,confidencePassed,confidenceRejected,usablePixels,frameRejected;
+ private long lastDepthAt,lastDebug;
+ private String depthStatus="아직 관측된 깊이 없음";
+ private float depthFx,depthFy,cameraMapX,cameraMapY,cameraMapZ;
+ synchronized void setPolicy(MeasurementPolicy value){pendingPolicy=value;}
+ private synchronized MeasurementPolicy takePolicy(){MeasurementPolicy value=pendingPolicy;pendingPolicy=null;return value;}
  private final HashMap<String,Cell> cells=new HashMap<>();
  private long lastSample,lastFrame,lastDepth;
  private String referenceMessage="바닥 찾는 중 · 사물 사이로 바닥이 보이게 비춰 주세요";
@@ -33,7 +41,9 @@ final class ArCameraRenderer implements GLSurfaceView.Renderer {
  public void onDrawFrame(javax.microedition.khronos.opengles.GL10 gl){
  GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);Session s=session;if(s==null||width==0)return;
  try{
- if(resetRequested){segment++;record("reset",MeasurementRecorder.json("elapsed_ms",android.os.SystemClock.elapsedRealtime()));if(anchor!=null)anchor.detach();anchor=null;cells.clear();reference.clear();referencePlane=null;lastDepth=0;resetRequested=false;}
+ MeasurementPolicy changed=takePolicy();
+ if(changed!=null){policy=changed;resetRequested=true;}
+ if(resetRequested){segment++;record("reset",MeasurementRecorder.json("elapsed_ms",android.os.SystemClock.elapsedRealtime()));if(anchor!=null)anchor.detach();anchor=null;cells.clear();reference.clear();referencePlane=null;lastDepth=lastDepthAt=lastDebug=0;depthWidth=depthHeight=confidencePassed=confidenceRejected=usablePixels=frameRejected=0;depthFx=depthFy=cameraMapX=cameraMapY=cameraMapZ=0;depthStatus="기준점 재설정 · 깊이 대기";record("measurement_policy",policy.metadata());resetRequested=false;}
  s.setCameraTextureName(texture);s.setDisplayGeometry(rotation,width,height);Frame f=s.update();drawCamera(f);
  if(f.getCamera().getTrackingState()!=TrackingState.TRACKING){reference.clear();empty(TrackingGuide.tracking(f.getCamera().getTrackingFailureReason().name()));return;}
  if(anchor==null)lock(f);
@@ -61,17 +71,17 @@ final class ArCameraRenderer implements GLSurfaceView.Renderer {
  nodes.add(new TerrainHudView.Node(ix,iz,clip[0]/clip[3],clip[1]/clip[3],elevation,known,c!=null&&c.estimate.uncertain,known&&now-c.estimate.seen>3000,c==null?.05f:c.estimate.deadband(TerrainMath.distance(ix,iz)),spacing,(float)Math.hypot(world[0]-cameraPosition[0],world[2]-cameraPosition[2])));
  }
  } 
- String message=rangeMeters+" m 보기 · 시작 위치 고정 · 안정 높이 "+measured+"개 · 저장값 유지";
+ String message="관측 높이 "+measured+"곳 · 시작 위치 기준\n천천히 같은 지면을 비추세요. 현장 정확도는 검증 전입니다.";
  if(nodes.isEmpty()) message="격자가 시야 밖에 있습니다 · 선택한 보기 범위\n카메라를 발 앞쪽으로 낮추세요. 멀리 이동했다면 현재 위치로 초기화하세요.";
- else if(measured==0) message="기준 격자 표시 중 · 높이는 미측정입니다\n점선은 평면 추정입니다. 폰을 좌우로 10~20 cm 천천히 이동하며 같은 바닥을 2~3초 스캔하세요.";
+ else if(measured==0) message="아직 높이를 측정하지 못했습니다\n같은 바닥을 보며 폰을 좌우 10~20 cm 천천히 움직이세요.";
  if(cells.values().stream().anyMatch(c->c.estimate.uncertain))message+="\n관측 불일치: 같은 격자를 다시 스캔하세요. 지속되면 초기화하세요.";
  
- listener.update(new TerrainHudView.Scene(nodes),message);
+ updateDiagnostics(now);listener.update(new TerrainHudView.Scene(nodes),message);
 
  }catch(com.google.ar.core.exceptions.SessionPausedException ignored){}catch(Exception e){Log.e("ParkCaddy","AR frame",e);empty("측정 재시도 중 · "+e.getClass().getSimpleName());}
  }
  private void record(String type,String payload){MeasurementRecorder out=recorder;if(out!=null)out.event(type,segment,payload);}
- private void empty(String m){long now=android.os.SystemClock.elapsedRealtime();if(!m.equals(lastRecordedStatus)||now-lastStatusRecord>3000){record("status",MeasurementRecorder.json("elapsed_ms",now,"message",m,"range_m",rangeMeters));lastRecordedStatus=m;lastStatusRecord=now;}listener.update(new TerrainHudView.Scene(new ArrayList<>()),m);}
+ private void empty(String m){debugInfo="추적 / 기준점 상태\n"+m+"\n현재 수치를 표시하지 않습니다.\n"+policyText();long now=android.os.SystemClock.elapsedRealtime();if(!m.equals(lastRecordedStatus)||now-lastStatusRecord>3000){record("status",MeasurementRecorder.json("elapsed_ms",now,"message",m,"range_m",rangeMeters));lastRecordedStatus=m;lastStatusRecord=now;}listener.update(new TerrainHudView.Scene(new ArrayList<>()),m);}
  private void drawCamera(Frame f){
  if(f.getTimestamp()==0)return;
  quad.rewind();uv.rewind();f.transformCoordinates2d(Coordinates2d.OPENGL_NORMALIZED_DEVICE_COORDINATES,quad,Coordinates2d.TEXTURE_NORMALIZED,uv);quad.rewind();uv.rewind();GLES20.glUseProgram(program);
@@ -93,7 +103,7 @@ final class ArCameraRenderer implements GLSurfaceView.Renderer {
  if(referencePlane!=null&&referencePlane.getSubsumedBy()!=null)referencePlane=referencePlane.getSubsumedBy();
  // ARCore may return a new Java wrapper for the SAME logical plane each frame.
  if(!p.equals(referencePlane)){reference.clear();referencePlane=p;}
- referenceMessage="바닥 후보 인식 · 기준 높이를 안정화하는 중\n같은 바닥을 약 2초 유지해 주세요. 보정 후 점선 격자가 먼저 표시됩니다.";
+ referenceMessage="바닥 후보 인식 · 기준 높이를 안정화하는 중\n같은 바닥을 약 2초 유지해 주세요. 이후 폰을 좌우로 천천히 움직여 주세요.";
  if(reference.add(floor,android.os.SystemClock.elapsedRealtime())){
  anchor=session.createAnchor(Pose.makeTranslation(camera.tx(),reference.median(),camera.tz()));
  record("reference",MeasurementRecorder.json("pose",poseValues(anchor.getPose()),"frame_ns",f.getTimestamp()));
@@ -107,7 +117,7 @@ final class ArCameraRenderer implements GLSurfaceView.Renderer {
  private static float[] poseValues(Pose p){float[] t=p.getTranslation(),q=p.getRotationQuaternion();return new float[]{t[0],t[1],t[2],q[0],q[1],q[2],q[3]};}
  private void sample(Frame f,long now){
  try(android.media.Image depth=f.acquireRawDepthImage16Bits();android.media.Image confidence=f.acquireRawDepthConfidenceImage()){
- if(depth.getTimestamp()==lastDepth)return;lastDepth=depth.getTimestamp();
+ if(depth.getTimestamp()<=lastDepth)return;lastDepth=depth.getTimestamp();
  if(confidence.getWidth()!=depth.getWidth()||confidence.getHeight()!=depth.getHeight())return;
  android.media.Image.Plane confidencePlane=confidence.getPlanes()[0];ByteBuffer confidenceData=confidencePlane.getBuffer();
  CameraIntrinsics intr=f.getCamera().getImageIntrinsics();
@@ -118,31 +128,55 @@ final class ArCameraRenderer implements GLSurfaceView.Renderer {
  Pose cameraToMap=anchor.getPose().inverse().compose(f.getCamera().getPose());
  boolean logFrame=recorder!=null&&recorder.enabled&&now-lastTelemetry>=1000;if(logFrame)lastTelemetry=now;
  ArrayList<Object> rawLog=logFrame?new ArrayList<>():null,cellLog=logFrame?new ArrayList<>():null;
- int validPixels=0,lowConfidence=0,outside=0;
+ int validPixels=0,lowConfidence=0,outside=0;usablePixels=frameRejected=0;
  HashMap<String,float[]> batches=new HashMap<>();
  int step=1; // Raw depth is sparse: inspect every pixel, confidence-gated.
  for(int y=0;y<depth.getHeight();y+=step)for(int x=0;x<depth.getWidth();x+=step){
  int conf=confidenceData.get(y*confidencePlane.getRowStride()+x*confidencePlane.getPixelStride())&0xff;
  int offset=y*plane.getRowStride()+x*plane.getPixelStride();int mm=data.getShort(offset)&0xffff;float d=mm*.001f;
  if(logFrame&&x%16==0&&y%16==0)rawLog.add(new float[]{x,y,mm,conf});
- if(conf<180){lowConfidence++;continue;}validPixels++;
- if(d<.3f||d>50)continue;
+ if(conf<policy.confidenceMin){lowConfidence++;continue;}validPixels++;
+ if(!policy.acceptsDepth(d,conf))continue;
  float[] p=cameraToMap.transformPoint(DepthGeometry.unproject(x,y,mm,fx,fy,cx,cy));
  float distance=(float)Math.hypot(p[0],p[2]);if(distance<.3f||distance>rangeMeters||Math.abs(p[1])>2){outside++;continue;}
- int ix=RangePolicy.bin(p[0],distance),iz=RangePolicy.bin(p[2],distance);String key=ix+":"+iz;
+ usablePixels++;int ix=RangePolicy.bin(p[0],distance),iz=RangePolicy.bin(p[2],distance);String key=ix+":"+iz;
  float[] a=batches.get(key);
  if(a==null){a=new float[]{ix,iz,0,0,p[1],p[1],0};batches.put(key,a);}
  a[2]+=p[1];a[3]++;a[6]+=conf;a[4]=Math.min(a[4],p[1]);a[5]=Math.max(a[5],p[1]);
  }
  for(Map.Entry<String,float[]> entry:batches.entrySet()){
- float[] a=entry.getValue();if(a[3]<2||a[5]-a[4]>.12f){if(logFrame)cellLog.add(Arrays.asList((int)a[0],(int)a[1],(int)a[3],a[2]/a[3],a[4],a[5],a[6]/a[3],null,"frame_rejected"));continue;}
+ float[] a=entry.getValue();if(!policy.acceptsFrame(a[3],a[4],a[5])){frameRejected++;if(logFrame)cellLog.add(Arrays.asList((int)a[0],(int)a[1],(int)a[3],a[2]/a[3],a[4],a[5],a[6]/a[3],null,"frame_rejected"));continue;}
  float y=a[2]/a[3];Cell c=cells.get(entry.getKey());
  if(c==null){c=new Cell((int)a[0],(int)a[1]);cells.put(entry.getKey(),c);}
  c.estimate.observe(y,now,cameraToMap.tx(),cameraToMap.ty(),cameraToMap.tz());
  if(logFrame)cellLog.add(Arrays.asList(c.x,c.z,(int)a[3],y,a[4],a[5],a[6]/a[3],c.estimate.published?c.estimate.y:null,c.estimate.uncertain?"disagreement":!c.estimate.published?"pending":now-c.estimate.seen>3000?"saved":"stable",c.estimate.decision,c.estimate.observationCount(),c.estimate.lastBaseline));
  }
- if(logFrame)record("depth_frame",MeasurementRecorder.json("frame_ns",f.getTimestamp(),"depth_ns",depth.getTimestamp(),"elapsed_ms",now,"range_m",rangeMeters,"rotation",rotation,"tracking",f.getCamera().getTrackingState().name(),"camera_world",poseValues(f.getCamera().getPose()),"anchor_world",poseValues(anchor.getPose()),"camera_map",poseValues(cameraToMap),"width",depth.getWidth(),"height",depth.getHeight(),"fx",fx,"fy",fy,"cx",cx,"cy",cy,"confidence_pass_pixels",validPixels,"low_confidence_pixels",lowConfidence,"outside_map_pixels",outside,"raw_subset",rawLog,"cells",cellLog));
+ depthWidth=depth.getWidth();depthHeight=depth.getHeight();depthFx=fx;depthFy=fy;
+ confidencePassed=validPixels;confidenceRejected=lowConfidence;lastDepthAt=now;
+ cameraMapX=cameraToMap.tx();cameraMapY=cameraToMap.ty();cameraMapZ=cameraToMap.tz();
+ depthStatus="Raw Depth 수신";
+ if(logFrame)record("depth_frame",MeasurementRecorder.json("policy",new MeasurementRecorder.Raw(policy.metadata()),"frame_ns",f.getTimestamp(),"depth_ns",depth.getTimestamp(),"elapsed_ms",now,"range_m",rangeMeters,"rotation",rotation,"tracking",f.getCamera().getTrackingState().name(),"camera_world",poseValues(f.getCamera().getPose()),"anchor_world",poseValues(anchor.getPose()),"camera_map",poseValues(cameraToMap),"width",depth.getWidth(),"height",depth.getHeight(),"fx",fx,"fy",fy,"cx",cx,"cy",cy,"confidence_pass_pixels",validPixels,"low_confidence_pixels",lowConfidence,"outside_map_pixels",outside,"raw_subset",rawLog,"cells",cellLog));
  cells.values().removeIf(c->!c.estimate.published&&now-c.estimate.lastObservation>30000);
- }catch(com.google.ar.core.exceptions.NotYetAvailableException ignored){if(now-lastStatusRecord>3000){record("depth_unavailable",MeasurementRecorder.json("elapsed_ms",now,"range_m",rangeMeters));lastStatusRecord=now;}}
+ }catch(com.google.ar.core.exceptions.NotYetAvailableException ignored){depthStatus="새 깊이 관측 대기";if(now-lastStatusRecord>3000){record("depth_unavailable",MeasurementRecorder.json("elapsed_ms",now,"range_m",rangeMeters));lastStatusRecord=now;}}
+ }
+ private String policyText(){
+ return "필터: "+(policy.strict?"엄격":"기본")+" / 센서 신뢰도 ≥ "+policy.confidenceMin+"/255"+
+   "\n광학축 깊이 0.3~"+policy.depthMaxMeters+" m / 격자 내 한 프레임 높이 폭 ≤ "+Math.round(policy.frameSpreadMaxMeters*100)+" cm"+
+   "\n신뢰도와 반복 안정성은 정확도 확률이 아닙니다.";
+ }
+ private void updateDiagnostics(long now){
+ if(now-lastDebug<500)return;lastDebug=now;
+ int stable=0,pending=0,uncertain=0;float maxBaseline=0,maxScatter=0;
+ for(Cell cell:cells.values()){
+  StableHeight estimate=cell.estimate;
+  if(estimate.valid())stable++;else if(estimate.uncertain)uncertain++;else pending++;
+  maxBaseline=Math.max(maxBaseline,estimate.lastBaseline);
+  if(estimate.valid())maxScatter=Math.max(maxScatter,estimate.scatter);
+ }
+ debugInfo=String.format(Locale.KOREA,
+  "추적: 정상 / 기준점: 고정\n%s / 마지막 수신: %s\n깊이 영상: %d × %d / fx %.1f / fy %.1f\n신뢰도 통과 %d / 탈락 %d 픽셀\n지면 후보 %d 픽셀 / 프레임 탈락 %d 격자\n안정 %d / 대기 %d / 불일치 %d 격자\n관측 이동폭 최대 %.1f cm / 안정 격자 MAD 최대 %.1f cm\n카메라 기준점 좌표: (%.2f, %.2f, %.2f) m\n%s",
+  depthStatus,lastDepthAt==0?"없음":String.format(Locale.KOREA,"%.1f초 전",(now-lastDepthAt)/1000f),
+  depthWidth,depthHeight,depthFx,depthFy,confidencePassed,confidenceRejected,usablePixels,frameRejected,
+  stable,pending,uncertain,maxBaseline*100,maxScatter*100,cameraMapX,cameraMapY,cameraMapZ,policyText());
  }
 }

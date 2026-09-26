@@ -1,3 +1,5 @@
+> Historical implementation notes. For current v2 behavior and validation status, see [GROUND-V2.md](GROUND-V2.md).
+
 # Height stability update
 
 ## Changes
