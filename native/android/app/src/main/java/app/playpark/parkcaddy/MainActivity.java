@@ -194,7 +194,7 @@ public final class MainActivity extends AppCompatActivity {
     content.addView(label("처음 안정적으로 확인한 지면을 0 cm로 사용합니다. 카메라를 드는 높이와 움직임은 AR 센서가 추정하므로 키나 기본 높이를 입력할 필요가 없습니다.", 18));
     referenceInfo = label(renderer.referenceInfo, 18);
     content.addView(referenceInfo, spaced());
-    content.addView(label("기준 지면을 잘못 잡았거나 장소를 옮겼다면 다시 설정하세요. 사용자 입력으로 깊이 배율을 바꾸지 않습니다.", 17));
+    content.addView(label("카메라 아래 0.4~2.3 m의 수평 평면을 지면 후보로 검사합니다. 책상·벤치처럼 넓고 평평한 물체도 통과할 수 있으므로 발 앞 잔디를 비추세요. 기준을 잘못 잡았거나 장소를 옮겼다면 다시 설정하세요. 사용자 입력으로 깊이 배율을 바꾸지 않습니다.", 17));
     Button reference = button("현재 지면으로 기준 다시 설정");
     content.addView(reference, spaced());
     heading(content, "관찰 범위");

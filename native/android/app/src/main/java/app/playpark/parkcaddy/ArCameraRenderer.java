@@ -120,7 +120,7 @@ final class ArCameraRenderer implements GLSurfaceView.Renderer {
  if(f.getTimestamp()<=lastReferenceFrame)return;lastReferenceFrame=f.getTimestamp();
  Pose camera=f.getCamera().getPose();
  boolean sawPlane=false,wrongHeight=false;
- referenceMessage="바닥 찾는 중 · 사물만 보이면 기준을 잡을 수 없습니다\n밝은 곳에서 타일·마루 이음선이 보이게 폰을 허리 높이로 들고 천천히 좌우 이동하세요.";
+ referenceMessage="지면 후보 찾는 중 · 책상·벤치 대신 발 앞 지면을 비춰 주세요\n밝은 곳에서 타일·마루 이음선이 보이게 폰을 허리 높이로 들고 천천히 좌우 이동하세요.";
  for(float y:new float[]{.8f,.65f,.5f})for(float x:new float[]{.5f,.3f,.7f})for(HitResult hit:f.hitTest(width*x,height*y)){
  if(!(hit.getTrackable() instanceof Plane))continue;
  Plane p=(Plane)hit.getTrackable();Plane parent=p.getSubsumedBy();if(parent!=null)p=parent;
