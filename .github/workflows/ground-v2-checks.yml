@@ -20,7 +20,7 @@ defaults:
 
 jobs:
   web:
-    name: Web physics tests
+    name: Web measurement and consent tests
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -74,7 +74,7 @@ jobs:
           output="$RUNNER_TEMP/parkcaddy-host-tests"
           mkdir -p "$output"
           source_root="app/src/main/java/app/playpark/parkcaddy"
-          names=(DepthGeometry GridDisplayPolicy MeasurementPolicy MeasurementRecorder RangePolicy ReferenceWindow StableHeight StickyLabels TerrainMath TrackingGuide)
+          names=(CloudRecordQueue DepthGeometry GridDisplayPolicy MeasurementPolicy MeasurementRecorder RangePolicy ReferenceWindow StableHeight StickyLabels TerrainMath TrackingGuide)
           sources=()
           for name in "${names[@]}"; do
             sources+=("$source_root/$name.java")
@@ -181,7 +181,7 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/ParkCaddyDerivedData" \
             -resultBundlePath "$RUNNER_TEMP/ParkCaddyAR-tests.xcresult" \
             -parallel-testing-enabled NO \
-            -only-testing:ParkCaddyARTests/DepthGeometryTests \
+            -only-testing:ParkCaddyARTests \
             CODE_SIGNING_ALLOWED=NO \
             test | tee "$RUNNER_TEMP/parkcaddy-ios-tests.log"
       - name: Upload unsigned simulator app

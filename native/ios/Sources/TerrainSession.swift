@@ -14,6 +14,7 @@ struct TerrainSample: Identifiable {
     let capturedAt: Date
     let sensorDepthMeters: Float
     let localTiltDegrees: Float
+    var gridIndex: Int? = nil
 
     var slopePercent: Float? {
         DepthGeometry.slopePercent(distance: distanceMeters, height: relativeHeightMeters)
@@ -48,6 +49,9 @@ final class TerrainSession: NSObject, ObservableObject, ARSessionDelegate {
     @Published private(set) var trackingText = "시작 전"
     @Published private(set) var message = "지면을 비춘 뒤 측정을 시작하세요."
     @Published private(set) var diagnostics = TerrainDiagnostics()
+    @Published private(set) var observationID: UUID?
+    private(set) var sessionID = UUID()
+    private(set) var lastMeasurementKind = "origin"
 
     @Published var debugMode = UserDefaults.standard.bool(forKey: "terrain.debug") {
         didSet { UserDefaults.standard.set(debugMode, forKey: "terrain.debug") }
@@ -103,6 +107,7 @@ final class TerrainSession: NSObject, ObservableObject, ARSessionDelegate {
     }
 
     private func runSession() {
+        sessionID = UUID()
         clearMeasurement(message: "잔디를 천천히 비추세요. 준비되면 기준점을 정할 수 있습니다.")
         let config = ARWorldTrackingConfiguration()
         config.worldAlignment = .gravity
@@ -154,10 +159,10 @@ final class TerrainSession: NSObject, ObservableObject, ARSessionDelegate {
         } else { screenPoints = [crosshair] }
         var report = reader.diagnostics
         var targets: [BurstTarget] = []
-        for point in screenPoints {
+        for (index, point) in screenPoints.enumerated() {
             report.attempted += 1
             switch reader.read(screenPoint: point) {
-            case .success(let observed): targets.append(BurstTarget(seed: observed))
+            case .success(let observed): targets.append(BurstTarget(seed: observed, gridIndex: kind == .grid ? index : nil))
             case .failure(let reason): report.rejected[reason.rawValue, default: 0] += 1
             }
         }
@@ -225,6 +230,7 @@ final class TerrainSession: NSObject, ObservableObject, ARSessionDelegate {
         }
         var points: [ObservedDepthPoint] = []
         var spreads: [Float] = []
+        var gridIndices: [Int?] = []
         for target in capture.targets {
             guard let estimate = DepthGeometry.robustPosition(target.observations.map(\.position), minimumCount: 8) else {
                 capture.report.rejected["반복 관측이 부족하거나 산포가 큽니다.", default: 0] += 1
@@ -244,6 +250,7 @@ final class TerrainSession: NSObject, ObservableObject, ARSessionDelegate {
             points.append(ObservedDepthPoint(position: estimate.position, depth: middle.depth,
                                              confidence: confidence, tilt: middle.tilt, frameTimestamp: acceptedTimestamp))
             spreads.append(estimate.medianDeviation)
+            gridIndices.append(target.gridIndex)
         }
         // For a grid, report the oldest retained point to avoid overstating freshness.
         capture.report.frameTimestamp = points.map(\.frameTimestamp).min()
@@ -281,11 +288,17 @@ final class TerrainSession: NSObject, ObservableObject, ARSessionDelegate {
             speak(String(format: "기준점에서 %.1f 미터, 약 %.0f 센티미터 %@", sample.distanceMeters, abs(sample.relativeHeightMeters) * 100, direction))
         case .grid:
             guard let origin = capture.origin else { return }
-            samples = points.map { makeSample($0, origin: origin) }
+            samples = points.enumerated().map { index, point in
+                var sample = makeSample(point, origin: origin)
+                sample.gridIndex = gridIndices[index]
+                return sample
+            }
             renderMarkers()
             message = "35곳 중 \(points.count)곳의 반복 관측이 통과했습니다. 빈 곳은 미측정입니다."
             speak("\(points.count)곳을 관측했습니다.")
         }
+        lastMeasurementKind = capture.kind == .origin ? "origin" : capture.kind == .target ? "target" : "grid"
+        observationID = UUID()
     }
     private var crosshair: CGPoint {
         CGPoint(x: sceneView.bounds.midX, y: sceneView.bounds.midY)
@@ -345,13 +358,50 @@ final class TerrainSession: NSObject, ObservableObject, ARSessionDelegate {
     private func renderMarkers() {
         removeMarkers()
         if let origin { addMarker(origin, color: .white, radius: 0.025) }
+        // Join only immediately adjacent accepted grid cells. Missing cells remain blank.
+        let grid = Dictionary(uniqueKeysWithValues: samples.compactMap { sample in
+            sample.gridIndex.map { ($0, sample) }
+        })
+        for (index, sample) in grid {
+            if index % 7 < 6, let next = grid[index + 1] { addGridEdge(sample.worldPosition, next.worldPosition) }
+            if let next = grid[index + 7] { addGridEdge(sample.worldPosition, next.worldPosition) }
+        }
         for sample in samples {
             let color: UIColor = sample.relativeHeightMeters > 0.015 ? .systemOrange
                 : sample.relativeHeightMeters < -0.015 ? .systemCyan : .systemGreen
             addMarker(sample.worldPosition, color: color, radius: 0.014)
+            addMeasurementLabel(sample, color: color)
         }
     }
 
+    private func addGridEdge(_ start: SIMD3<Float>, _ end: SIMD3<Float>) {
+        let delta = end - start
+        let length = simd_length(delta)
+        guard length > 0.0001 else { return }
+        let geometry = SCNCylinder(radius: 0.002, height: CGFloat(length))
+        geometry.firstMaterial?.diffuse.contents = UIColor.white.withAlphaComponent(0.65)
+        geometry.firstMaterial?.lightingModel = .constant
+        let node = SCNNode(geometry: geometry)
+        node.simdPosition = (start + end) / 2
+        node.simdOrientation = simd_quatf(from: SIMD3<Float>(0, 1, 0), to: delta / length)
+        pointsNode.addChildNode(node)
+    }
+
+    private func addMeasurementLabel(_ sample: TerrainSample, color: UIColor) {
+        let text = SCNText(string: String(format: "%.2f m / %+.1f cm", sample.distanceMeters,
+                                         sample.relativeHeightMeters * 100), extrusionDepth: 0)
+        text.font = UIFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
+        text.flatness = 0.2
+        text.firstMaterial?.diffuse.contents = color
+        text.firstMaterial?.lightingModel = .constant
+        let node = SCNNode(geometry: text)
+        let bounds = text.boundingBox
+        node.pivot = SCNMatrix4MakeTranslation((bounds.min.x + bounds.max.x) / 2, bounds.min.y, 0)
+        node.simdScale = SIMD3<Float>(repeating: 0.003)
+        node.simdPosition = sample.worldPosition + SIMD3<Float>(0, 0.04, 0)
+        node.constraints = [SCNBillboardConstraint()]
+        pointsNode.addChildNode(node)
+    }
     private func addMarker(_ position: SIMD3<Float>, color: UIColor, radius: CGFloat) {
         let sphere = SCNSphere(radius: radius)
         sphere.firstMaterial?.diffuse.contents = color
@@ -427,9 +477,11 @@ private enum CaptureKind: Equatable { case origin, target, grid }
 
 private final class BurstTarget {
     let seed: ObservedDepthPoint
+    let gridIndex: Int?
     var observations: [ObservedDepthPoint]
-    init(seed: ObservedDepthPoint) {
+    init(seed: ObservedDepthPoint, gridIndex: Int?) {
         self.seed = seed
+        self.gridIndex = gridIndex
         self.observations = [seed]
     }
 }

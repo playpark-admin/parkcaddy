@@ -1,5 +1,7 @@
 # Ground v2 Android — 2026-09-27
 
+> 카메라 중심 UI 및 최초 동의 후 관리자용 자동 수집 수정은 [NATIVE-COLLECTION.md](NATIVE-COLLECTION.md)를 우선 참고하세요. 아래는 최초 Ground v2 이력이며 자동 서버 수집이 없다는 설명 등은 후속 수정 이전 상태입니다.
+
 이 문서는 `2.0.0-ground-preview`의 현재 동작입니다. 기존 DISPLAY / RANGE / HEIGHT-STABILITY / IMPLEMENTATION 문서는 이전 변경 이력이며, 여기와 다르면 이 문서를 우선합니다.
 
 ## 이번 버전에서 사용할 수 있는 기능

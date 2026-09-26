@@ -1,12 +1,12 @@
 {
-  "name": "파크캐디 그라운드 노트",
-  "short_name": "파크캐디",
+  "name": "그라운드 확인 · 파크캐디",
+  "short_name": "그라운드 확인",
   "lang": "ko",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#f5f5ed",
-  "theme_color": "#163e30",
+  "background_color": "#101a19",
+  "theme_color": "#101a19",
   "icons": [
     {
       "src": "icon.svg",

@@ -22,11 +22,12 @@ http
           "." + (pathname === "/" ? "/index.html" : pathname),
         );
       if (!file.startsWith(root + path.sep)) throw new Error("invalid path");
+      const content = await fs.readFile(file);
       res.writeHead(200, {
         "content-type": types[path.extname(file)] || "application/octet-stream",
         "cache-control": "no-store",
       });
-      res.end(await fs.readFile(file));
+      res.end(content);
     } catch {
       res.writeHead(404);
       res.end("Not found");

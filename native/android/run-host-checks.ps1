@@ -7,7 +7,7 @@ $projectDirectory = $PSScriptRoot
 $outputDirectory = Join-Path $projectDirectory ".host-tests"
 New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null
 $sourceDirectory = Join-Path $projectDirectory "app/src/main/java/app/playpark/parkcaddy"
-$names = @("DepthGeometry","GridDisplayPolicy","MeasurementPolicy","MeasurementRecorder","RangePolicy","ReferenceWindow","StableHeight","StickyLabels","TerrainMath","TrackingGuide")
+$names = @("CloudRecordQueue","DepthGeometry","GridDisplayPolicy","MeasurementPolicy","MeasurementRecorder","RangePolicy","ReferenceWindow","StableHeight","StickyLabels","TerrainMath","TrackingGuide")
 $sources = @($names | ForEach-Object { Join-Path $sourceDirectory ($_ + ".java") })
 $tests = @(Get-ChildItem -LiteralPath (Join-Path $projectDirectory "tests") -Filter "*.java")
 $sources += @($tests | Select-Object -ExpandProperty FullName)

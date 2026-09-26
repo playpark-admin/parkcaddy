@@ -9,7 +9,7 @@ final class TerrainHudView extends View {
  private final StickyLabels sticky=new StickyLabels();
  void resetLabels(){sticky.clear();}
  private Scene scene=new Scene(new ArrayList<>());
- int bottomInset; boolean grid=true,heat=true,reference=false,largeLabels=true;float sensitivity=2;
+ int topInset,bottomInset; boolean grid=true,heat=true,reference=false,largeLabels=true;float sensitivity=2;
  private final Paint paint=new Paint(3);
  private final Path fill=new Path();
  private final android.graphics.DashPathEffect dash=new android.graphics.DashPathEffect(new float[]{8,9},0);
@@ -42,7 +42,7 @@ private void drawLabels(Canvas canvas, Scene s) {
  for(Node n:s.nodes.values()){if(!reference&&!n.known)continue;
    float px=x(n),py=y(n);
    if(px>boxWidth/2+8*density&&px<getWidth()-boxWidth/2-8*density
-       &&py>60*density+boxHeight&&py<getHeight()-bottomInset-12*density)visible.add(n);
+       &&py>Math.max(60*density,topInset)+boxHeight&&py<getHeight()-bottomInset-12*density)visible.add(n);
  }
  visible.sort((a,b)->{int d=Float.compare(TerrainMath.distance(a.ix,a.iz),TerrainMath.distance(b.ix,b.iz));if(d!=0)return d;return Integer.compare(a.ix,b.ix);});
  int count=visible.size();float[] distances=new float[count],xs=new float[count],ys=new float[count];boolean[] known=new boolean[count];
@@ -58,7 +58,7 @@ private void drawLabels(Canvas canvas, Scene s) {
    paint.setColor(n.known?0xFF87F1D1:0xFFB8C1C6);
    canvas.drawText(n.uncertain?"높이 재측정 필요":GridDisplayPolicy.heightLabel(n.height,n.known),px,py-boxHeight+text*2.25f,paint);
    paint.setTextSize(text*.78f);paint.setColor(0xFFC0CFD3);
-   canvas.drawText("G"+n.ix+":"+n.iz+" · "+(n.uncertain?"불일치":!n.known?"관측 중":n.saved?"저장":Math.abs(n.height)<=n.deadband?"작은 차이":"관측"),px,py-text*.4f,paint);
+   canvas.drawText((n.uncertain?"다시 관측":!n.known?"참고 평면":n.saved?"이전 관측":Math.abs(n.height)<=n.deadband?"작은 높이차":"기준 지면 대비"),px,py-text*.4f,paint);
    paint.setTextSize(text);
    paint.setColor(0xFFFFFFFF);canvas.drawCircle(px,py+3*density,2*density,paint);
  }
