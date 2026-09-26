@@ -74,7 +74,7 @@ jobs:
           output="$RUNNER_TEMP/parkcaddy-host-tests"
           mkdir -p "$output"
           source_root="app/src/main/java/app/playpark/parkcaddy"
-          names=(CloudRecordQueue DepthGeometry GridDisplayPolicy MeasurementPolicy MeasurementRecorder RangePolicy ReferenceWindow StableHeight StickyLabels TerrainMath TrackingGuide)
+          names=(ScanProgress CloudRecordQueue DepthGeometry GridDisplayPolicy MeasurementPolicy MeasurementRecorder RangePolicy ReferenceWindow StableHeight StickyLabels TerrainMath TrackingGuide)
           sources=()
           for name in "${names[@]}"; do
             sources+=("$source_root/$name.java")

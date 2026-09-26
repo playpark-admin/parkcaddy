@@ -9,6 +9,7 @@ final class StableHeight {
  float y,scatter,lastBaseline; long seen,lastObservation; boolean published,uncertain;
  String decision="insufficient_samples";
  int observationCount(){return size;}
+ long observationDurationMs(){long oldest=lastInput;for(int i=0;i<size;i++)oldest=Math.min(oldest,times[i]);return Math.max(0,lastInput-oldest);}
  boolean observe(float h,long now,float x,float vertical,float z){
   if(!Float.isFinite(h)||!Float.isFinite(x)||!Float.isFinite(vertical)||!Float.isFinite(z)||now<=lastInput)return false;
   if(lastInput>=0&&now-lastInput>5000){size=next=0;}

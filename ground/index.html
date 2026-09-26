@@ -7,17 +7,20 @@
       content="width=device-width,initial-scale=1,viewport-fit=cover"
     />
     <meta name="theme-color" content="#101a19" />
-    <title>그라운드 확인 · 파크캐디</title>
+    <title>그라운드 자동 스캔 · 파크캐디</title>
     <link rel="manifest" href="manifest.webmanifest" />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <main id="capture" aria-label="그라운드 카메라">
-      <video id="video" autoplay playsinline muted></video>
-      <div id="aim-grid" aria-hidden="true">
-        <i></i><i></i><i></i><i></i><b></b><b></b><b></b><b></b>
+    <main id="capture" aria-label="그라운드 자동 측정">
+      <canvas
+        id="terrain-overlay"
+        aria-label="실제 관측한 지면 그리드"
+      ></canvas>
+      <div id="placeholder">
+        발 앞의 잔디를 비춰 주세요.<br />스캔이 시작되면 지면을 자동으로
+        관측합니다.
       </div>
-      <div id="placeholder">바닥을 향해 카메라를 켜 주세요</div>
       <header class="camera-header">
         <button id="stop" class="glass" aria-label="그라운드 확인 닫기">
           ‹ 닫기
@@ -28,23 +31,44 @@
         </div>
         <button id="settings-open" class="glass">⚙ 설정</button>
       </header>
-      <div class="readouts">
+      <div class="readouts" id="readouts" hidden>
         <div>
-          <span>높이차</span><strong id="height-output">—</strong
-          ><small>깊이 측정 필요</small>
+          <span>기준 대비 높이</span><strong id="height-output">—</strong
+          ><small>중앙 근처 관측점</small>
         </div>
         <div>
-          <span>거리 <small>평지 가정</small></span
-          ><strong id="distance">—</strong
-          ><small id="distance-quality">설정에서 사용</small>
+          <span>수평 거리</span><strong id="distance">—</strong
+          ><small id="distance-quality">반복 관측 확인 중</small>
         </div>
       </div>
-      <div class="reticle" aria-hidden="true"></div>
-      <span class="grid-label">조준 그리드</span>
+      <div class="reticle" aria-hidden="true" hidden></div>
+      <section id="support-panel" hidden>
+        <h2>깊이 측정 지원이 필요해요</h2>
+        <p id="support-message"></p>
+        <a
+          class="secondary"
+          id="android-app"
+          href="downloads/parkcaddy-ground-android.apk"
+          download
+          >Android 측정 앱 받기</a
+        >
+        <p class="help">
+          iPhone은 LiDAR 지원 기기의 전용 앱이 필요합니다. 현재 iOS 실기기 배포
+          서명은 준비되지 않았습니다.
+        </p>
+      </section>
       <footer class="camera-footer">
-        <p id="capture-hint">중앙에 지면을 맞춰 주세요</p>
-        <button id="start" class="primary">카메라 켜기</button
-        ><button id="shoot" class="primary" disabled hidden>촬영</button>
+        <div id="scan-status" aria-live="off">
+          <strong id="scan-phase" role="status" aria-live="polite"
+            >지원 여부를 확인하고 있어요</strong
+          ><progress
+            id="scan-progress"
+            aria-label="측정 관측 진행"
+            max="1"
+          ></progress>
+          <p id="scan-detail">실제 깊이 데이터를 확인합니다</p>
+        </div>
+        <button id="start" class="primary" disabled>스캔 시작</button>
       </footer>
     </main>
     <div id="notice" role="status" aria-live="polite"></div>
@@ -57,86 +81,68 @@
           </button>
         </div>
         <details open>
-          <summary>사용자 설정 · 높이와 보정</summary>
+          <summary>측정 범위 · 기본 높이 조건</summary>
           <div class="section-body">
-            <label class="switch"
-              >평지 가정 거리 표시<input name="estimate" type="checkbox"
-            /></label>
             <p class="help">
-              높이는 서 있는 위치의 지면에서 카메라 렌즈까지입니다. 웹에서는
-              평지 가정으로 중앙 조준점의 거리를 추정합니다.
+              자동 기준점은 반복 관측한 지면 후보에서 잡습니다. 아래 높이는
+              휴대폰 아래의 지면 후보를 고르는 조건이며, 측정된 깊이에 곱하는
+              보정값이 아닙니다.
             </p>
             <div class="fields">
               <label
-                >카메라 기본 높이 (m)<input
-                  name="heightM"
+                >카메라 높이 최소 (m)<input
+                  name="minCameraHeightM"
                   type="number"
-                  min="0.4"
-                  max="2.5"
-                  step="0.01"
-                  required /></label
-              ><label
-                >높이 오차 가정 ± (m)<input
-                  name="heightErrorM"
-                  type="number"
-                  min="0.01"
-                  max="0.5"
-                  step="0.01"
-                  required /></label
-              ><label
-                >각도 오차 가정 ± (°)<input
-                  name="angleErrorDeg"
-                  type="number"
-                  min="0.1"
-                  max="10"
+                  min="0.3"
+                  max="2.2"
                   step="0.1"
                   required /></label
               ><label
-                >센서 각도 보정 (°)<input
-                  name="angleOffset"
+                >카메라 높이 최대 (m)<input
+                  name="maxCameraHeightM"
                   type="number"
-                  min="-10"
-                  max="10"
+                  min="0.5"
+                  max="2.5"
                   step="0.1"
                   required
               /></label>
             </div>
+            <label
+              >관측 거리 상한<select name="maxRangeM">
+                <option value="3">3 m · 가까운 지면</option>
+                <option value="5">5 m · 넓게 관찰</option>
+              </select></label
+            >
             <p class="help">
-              오차 입력은 가정 상한입니다. 작은 값을 입력해도 기기의 정확도가
-              높아지지는 않습니다. AR 깊이 측정에는 이 높이를 곱하지 않습니다.
+              평평하게 보이는 물체를 지면으로 오인할 가능성은 남습니다. 사람이
+              서 있는 지면을 비추세요. 설정을 바꾸면 새 기준점부터 자동
+              관측합니다.
             </p>
+            <button id="reset-scan" type="button" class="secondary">
+              기준점부터 다시 스캔
+            </button>
           </div>
         </details>
         <details id="display-settings">
           <summary>화면과 안내</summary>
           <div class="section-body">
             <label class="switch"
-              >조준 그리드 표시<input name="grid" type="checkbox" /></label
+              >측정 그리드 표시<input name="grid" type="checkbox" /></label
             ><label class="switch"
               >더 큰 글씨<input name="largeText" type="checkbox" /></label
             ><label class="switch"
-              >음성 안내<input name="voice" type="checkbox" /></label
+              >상태 변경 음성 안내<input name="voice" type="checkbox" /></label
             ><label class="switch"
-              >촬영 후 진동<input name="haptic" type="checkbox" /></label
-            ><label class="secondary file-button"
-              >기본 카메라로 촬영<input
-                id="photo-file"
-                type="file"
-                accept="image/*"
-                capture="environment"
+              >첫 측정 완료 시 진동<input name="haptic" type="checkbox"
             /></label>
-            <p class="help">
-              기본 카메라 사진에는 촬영 순간과 동기화된 센서값을 붙이지
-              않습니다.
-            </p>
           </div>
         </details>
         <details id="context-settings">
           <summary>구장 · 홀 정보</summary>
           <div class="section-body">
             <p class="help">
-              스코어카드에서 전달받습니다. 연결되지 않은 경우 직접 지정할 수
-              있습니다.
+              현재는 독립 실행입니다. 스코어카드의 구장·코스·홀 연결은 후속
+              단계입니다.
             </p>
             <label
               >구장 이름<input
@@ -147,51 +153,36 @@
               >홀 번호<select id="hole">
                 <option value="">미지정</option>
               </select></label
-            ><label
-              >지면 상태<select id="surface">
-                <option value="unknown">확인 전</option>
-                <option value="normal">보통</option>
-                <option value="wet">젖음</option>
-                <option value="dry">마름</option>
-                <option value="damaged">패임 · 손상</option>
-              </select></label
             >
           </div>
         </details>
         <details id="analysis">
-          <summary>정밀도 분석 · 실시간 데이터</summary>
+          <summary>정밀도 분석 · 실제 관측 데이터</summary>
           <div class="section-body">
-            <p class="help">
-              현재 수신된 값만 표시합니다. 반복 관측의 산포와 실제 지면 측정
-              정확도는 다릅니다.
-            </p>
             <dl class="metrics">
-              <dt>카메라</dt>
-              <dd id="cam-status">대기</dd>
-              <dt>GPS</dt>
-              <dd id="gps-status">대기</dd>
-              <dt>방향 센서</dt>
-              <dd id="imu-status">대기</dd>
-              <dt>수평 아래 조준각</dt>
-              <dd id="angle-data">—</dd>
-              <dt>최근 5초 관측</dt>
-              <dd id="sample-data">0개</dd>
-              <dt>각도 중앙값 / MAD</dt>
-              <dd id="spread-data">—</dd>
-              <dt>새 영상 프레임</dt>
+              <dt>스캔 상태</dt>
+              <dd id="scan-state-data">대기</dd>
+              <dt>서로 다른 깊이 관측</dt>
               <dd id="frame-data">0개</dd>
-              <dt>상대 높이 · 지면 경사</dt>
-              <dd>깊이·자세 데이터 없음</dd>
+              <dt>관측점 반복 조건</dt>
+              <dd id="sample-data">—</dd>
+              <dt>관측 이동폭</dt>
+              <dd id="baseline-data">—</dd>
+              <dt>통과한 격자</dt>
+              <dd id="cell-data">0개</dd>
+              <dt>격자 간격</dt>
+              <dd>25 cm</dd>
+              <dt>높이 반복 MAD</dt>
+              <dd id="spread-data">—</dd>
+              <dt>카메라 기준면 높이</dt>
+              <dd id="camera-height-data">—</dd>
+              <dt>GPS</dt>
+              <dd id="gps-status">미수집</dd>
             </dl>
-            <div class="calculation">
-              <strong>조건부 거리 범위</strong>
-              <p id="distance-note">센서 대기</p>
-              <p id="sensitivity-data">센서 대기</p>
-            </div>
             <p class="help">
-              MAD는 반복 각도의 중앙절대편차입니다. 이동 중인 각도 변화도
-              포함하므로 정확도나 95% 신뢰구간으로 해석하지 않습니다. 웹의 영상
-              프레임 수는 실제 3D 깊이 표본 수가 아닙니다.
+              진행 표시는 실제 관측량과 이동 조건에 따른 것입니다. 100%는 절대
+              정확도가 100%라는 뜻이 아닙니다. MAD는 반복값의 중앙절대편차이며
+              실제 cm 정확도나 신뢰구간이 아닙니다.
             </p>
             <details>
               <summary>원시 데이터 · 계산 입력</summary>
@@ -203,73 +194,57 @@
           </div>
         </details>
         <details id="principles">
-          <summary>계산 원리 · 정밀도의 한계</summary>
+          <summary>자동 스캔 원리 · 정밀도의 한계</summary>
           <div class="section-body prose">
-            <h3>1. 거리의 기하학</h3>
-            <code>d = h / tan(α)</code>
+            <h3>실제 깊이로 지면 복원</h3>
+            <code>p_world = R · (z K⁻¹ [u v 1]ᵀ) + t</code>
             <p>
-              h는 렌즈 높이, α는 수평선 아래의 중앙 조준각입니다. 지면이
-              평평하다는 가정이 필요하며 휴대폰 기울기는 지면 경사가 아닙니다.
+              카메라 깊이와 촬영 자세를 같은 시각으로 결합합니다. 지면 후보의
+              법선과 높이 조건을 확인한 뒤 기준점을 잡습니다. 기준면 대비 높이와
+              수평 거리를 계산하여 관측한 격자만 연결합니다.
             </p>
-            <code
-              >d_min = (h − e_h) / tan(α + e_α)<br />d_max = (h + e_h) / tan(α −
-              e_α)</code
-            >
+            <h3>자동 반복 관측</h3>
             <p>
-              이 범위는 입력 오차 상한과 평지 가정이 맞을 때만 유효합니다. 먼
-              지점일수록 작은 각도 오차가 거리 오차를 크게 만듭니다.
-            </p>
-            <h3>2. 빠른 반복 관측</h3>
-            <p>
-              네이티브 AR은 같은 지점을 서로 다른 시각의 깊이 프레임으로 반복
-              관측하고 이상값을 제거합니다. 정지 사진 복제나 같은 시각의 깊이는
-              표본으로 중복 계산하지 않습니다.
+              서로 다른 깊이 프레임을 비교하고, 충분한 관측 시간·시점 이동·반복
+              안정성이 확인된 지점부터 숫자를 표시합니다. 미관측 영역을 임의의
+              굴곡으로 채우지 않습니다. 추적이 끊기거나 값이 오래되면 숫자를
+              숨기고 다시 관측합니다.
             </p>
             <code>Var(평균) = σ²[1 + (N − 1)ρ] / N</code>
             <p>
-              위 식은 표본 분산이 같고 모든 표본 쌍의 상관이 ρ일 때입니다. 독립
-              표본(ρ=0)의 무작위 오차만 1/√N로 감소합니다. 공통 편향과 시점 간
-              추적 오차는 단순 평균으로 없어지지 않습니다.
+              표본 분산이 같고 모든 표본 쌍의 상관이 ρ라는 조건의 식입니다. 독립
+              표본의 무작위 오차만 1/√N로 감소하며, 렌즈·깊이·기준점의 공통
+              편향은 반복만으로 없어지지 않습니다.
             </p>
-            <h3>3. 상대 높이와 거리</h3>
-            <code>z = h − d · tan(α)</code>
+            <h3>거리·높이의 의미</h3>
+            <code
+              >Δh = y_target − y_reference<br />d = √((x_target − x_camera)² +
+              (z_target − z_camera)²)</code
+            >
             <p>
-              별도로 측정한 수평 거리 d가 있을 때만 높이 z를 계산할 수 있습니다.
-              수평에 가까운 시선에서 거리 10m, 각도 오차 0.1°의 높이 민감도는 약
-              1.75cm입니다. 이것은 달성 정확도가 아니라 다른 오차를 제외한
-              기하학 예시입니다.
+              웹 AR의 거리는 카메라 아래 위치와 관측점 사이의 수평 거리입니다.
+              표시 높이는 최초 기준 지면과의 상대값입니다. 소수점 표시나
+              매끄러운 격자가 실제 정확도를 보장하지 않습니다.
             </p>
-            <h3>4. GPS와 누적 관측</h3>
+            <h3>공동 자료의 활용</h3>
             <p>
-              GPS는 장소 검색에 사용합니다. 여러 사람의 측정은 동일
-              기준점·척도·좌표계로 정합해야 비교할 수 있습니다. 사진 저장만으로
-              지형의 정밀도가 높아졌다고 판정하지 않습니다.
-            </p>
-            <p>
-              현장 기준 측량 없이 실제 cm 정확도를 보장할 수 없습니다. 지원되는
-              Android·iOS의 AR에서는 깊이와 자세를 이용하고, 웹에서는 측정되지
-              않은 높이차를 숫자로 만들지 않습니다.
+              GPS는 장소 검색에 사용합니다. 여러 사람의 관측은 공통
+              기준점·척도·좌표계로 정합해야 결합할 수 있습니다. 현재 서버는
+              자료를 수집하며 지형을 자동 통합하지 않습니다.
             </p>
             <p>
+              <a
+                href="https://www.w3.org/TR/webxr-depth-sensing-1/"
+                target="_blank"
+                rel="noopener"
+                >WebXR 깊이 정의</a
+              >
+              ·
               <a
                 href="https://developers.google.com/ar/develop/depth"
                 target="_blank"
                 rel="noopener"
                 >ARCore 깊이 원리</a
-              >
-              ·
-              <a
-                href="https://developer.apple.com/documentation/arkit/ardepthdata"
-                target="_blank"
-                rel="noopener"
-                >ARKit 깊이 데이터</a
-              >
-              ·
-              <a
-                href="https://www.w3.org/TR/geolocation/"
-                target="_blank"
-                rel="noopener"
-                >GPS 정확도 정의</a
               >
             </p>
           </div>
@@ -277,12 +252,12 @@
         <details id="privacy">
           <summary>데이터 제공 · 동의 관리</summary>
           <div class="section-body">
-            <p id="collection-state">동의 전</p>
+            <p id="collection-state"></p>
             <p class="help">
-              동의 후 촬영한 사진·위치·센서 데이터는 화면에 전송 목록을 표시하지
-              않고 자동 전송합니다. 원본은 관리자가 연구 목적으로 확인하며 일반
-              사용자 앱에서는 읽을 수 없습니다. 앱을 닫으면 전송이 멈출 수
-              있으며 다음 실행 시 동의 상태를 확인해 재시도합니다.
+              동의 후 확인된 측정수치·관측 품질·위치는 최대 30초에 한 번 자동
+              전송합니다. 웹 AR에서는 카메라 원본 사진을 전송하지 않습니다.
+              관리자만 원자료를 볼 수 있습니다. 이전 버전의 사진 대기열은 해당
+              촬영 때의 동의에 따라 처리합니다.
             </p>
             <button id="collection-enable" type="button" class="secondary">
               데이터 제공 안내 보기</button
@@ -291,8 +266,12 @@
             ><button id="collection-delete" type="button" class="secondary">
               제공 중지 및 서버 데이터 삭제
             </button>
-            <p class="help">서버 자료 삭제 후에는 늦게 도착한 업로드를 차단하기 위한 최소 ID 삭제표식만 남습니다. 사진·위치·측정 수치는 삭제됩니다.</p>
-<p id="collection-detail" class="help"></p>
+            <p class="help">
+              삭제한 자료의 재전송을 막는 최소 ID 삭제표식만 서버에 남습니다.
+              익명 계정의 기기 데이터를 지우면 기존 서버 자료의 삭제 권한을 잃을
+              수 있습니다.
+            </p>
+            <p id="collection-detail" class="help"></p>
           </div>
         </details>
         <div class="sheet-actions">
@@ -303,19 +282,18 @@
     <dialog id="consent" aria-labelledby="consent-title">
       <h2 id="consent-title">그라운드 데이터 제공</h2>
       <p>
-        촬영한 지면 사진·위치·구장과 홀·센서·기기 정보의 연구용 수집에
-        동의하시나요?
+        자동 스캔으로 측정한 높이·거리·관측 품질·위치·구장과 홀·기기 정보를
+        연구용으로 제공하시나요?
       </p>
       <p>
-        동의하면 이후 촬영분은 별도의 전송 버튼 없이 파크캐디 Firebase 서버로
-        전송됩니다. 사진은 최대 1280px로 축소하며, 관리자만 원본을 확인합니다.
-        지형 정합·공동 지도 생성은 후속 개발 단계입니다.
+        동의하면 충분한 관측이 모인 후 별도 조작 없이 관리자 서버로 전송합니다.
+        현재 웹 AR은 원본 카메라 사진을 전송하지 않습니다. 지형 정합·공동 지도
+        생성은 후속 개발 단계입니다.
       </p>
       <p class="help">
-        선택 사항이며 거부해도 촬영 기능을 사용할 수 있습니다. 설정에서
-        중지·삭제를 요청할 수 있습니다. 브라우저 데이터를 지우면 익명 계정으로
-        제공한 데이터의 삭제 권한을 잃을 수 있습니다. 사람이나 개인정보가 찍히지
-        않게 해 주세요.
+        선택 사항이며 거부해도 측정할 수 있습니다. 설정에서 제공 중지·서버
+        데이터 삭제를 할 수 있습니다. 브라우저 데이터를 지우면 익명 계정의 기존
+        자료를 직접 삭제할 수 없을 수 있습니다.
       </p>
       <div class="consent-actions">
         <button id="consent-decline" class="secondary">동의하지 않음</button

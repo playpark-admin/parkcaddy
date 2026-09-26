@@ -50,6 +50,7 @@ final class TerrainSession: NSObject, ObservableObject, ARSessionDelegate {
     @Published private(set) var message = "지면을 비춘 뒤 측정을 시작하세요."
     @Published private(set) var diagnostics = TerrainDiagnostics()
     @Published private(set) var observationID: UUID?
+    @Published private(set) var scanEvidence = ScanEvidence()
     private(set) var sessionID = UUID()
     private(set) var lastMeasurementKind = "origin"
 
@@ -62,22 +63,31 @@ final class TerrainSession: NSObject, ObservableObject, ARSessionDelegate {
     @Published var maxRangeMeters = Float(UserDefaults.standard.object(forKey: "terrain.range") as? Double ?? 3.0) {
         didSet {
             UserDefaults.standard.set(Double(maxRangeMeters), forKey: "terrain.range")
-            clearMeasurement(message: "거리 설정이 바뀌었습니다. 기준점을 다시 정하세요.")
+            clearMeasurement(message: "거리 조건에 맞는 지면 기준을 자동으로 다시 찾습니다.")
         }
     }
     @Published var minimumConfidence = UserDefaults.standard.object(forKey: "terrain.confidence") as? Int ?? 2 {
         didSet {
             UserDefaults.standard.set(minimumConfidence, forKey: "terrain.confidence")
-            clearMeasurement(message: "센서 품질 설정이 바뀌었습니다. 기준점을 다시 정하세요.")
+            clearMeasurement(message: "센서 조건에 맞는 지면 기준을 자동으로 다시 찾습니다.")
         }
     }
 
+    @Published var expectedCameraHeightMeters = Float(UserDefaults.standard.object(forKey: "terrain.captureHeight") as? Double ?? 1.2) {
+        didSet {
+            UserDefaults.standard.set(Double(expectedCameraHeightMeters), forKey: "terrain.captureHeight")
+            clearMeasurement(message: "촬영 높이 조건에 맞는 지면 기준을 다시 찾습니다.")
+        }
+    }
     var canMeasure: Bool { isRunning && !isCollecting && trackingReady && hasDepth && capability == .supported }
     private let speech = AVSpeechSynthesizer()
     private let pointsNode = SCNNode()
     private var lastUIFrame: TimeInterval = 0
     private var burst: DepthBurst?
     private var originTimestamp: TimeInterval?
+    private var automaticScan = AutomaticScanPolicy()
+    private var activeRequested = false
+    private var frameWatchdog: Timer?
 
     override init() {
         super.init()
@@ -89,6 +99,8 @@ final class TerrainSession: NSObject, ObservableObject, ARSessionDelegate {
     }
 
     func start() {
+        activeRequested = true
+        guard !isRunning else { return }
         guard capability == .supported else {
             message = "이 기기는 사진·위치 기록을 사용하세요. LiDAR 지면 측정은 지원하지 않습니다."
             return
@@ -98,7 +110,7 @@ final class TerrainSession: NSObject, ObservableObject, ARSessionDelegate {
         case .notDetermined:
             AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
                 DispatchQueue.main.async {
-                    if granted { self?.runSession() }
+                    if granted, self?.activeRequested == true { self?.runSession() }
                     else { self?.message = "설정 앱에서 카메라 사용을 허용해 주세요." }
                 }
             }
@@ -108,7 +120,7 @@ final class TerrainSession: NSObject, ObservableObject, ARSessionDelegate {
 
     private func runSession() {
         sessionID = UUID()
-        clearMeasurement(message: "잔디를 천천히 비추세요. 준비되면 기준점을 정할 수 있습니다.")
+        clearMeasurement(message: "지면을 비추세요. 깊이와 지면 기준을 자동으로 확인합니다.")
         let config = ARWorldTrackingConfiguration()
         config.worldAlignment = .gravity
         // Do not substitute estimated planes or temporal smoothing for observed depth.
@@ -117,19 +129,31 @@ final class TerrainSession: NSObject, ObservableObject, ARSessionDelegate {
         isRunning = true
         trackingReady = false
         hasDepth = false
+        frameWatchdog?.invalidate()
+        frameWatchdog = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            guard let self, self.isRunning, let frame = self.sceneView.session.currentFrame,
+                  ProcessInfo.processInfo.systemUptime - frame.timestamp >= 0.5 else { return }
+            self.trackingReady = false
+            self.hasDepth = false
+            self.trackingText = "새 카메라 프레임 대기"
+            self.clearMeasurement(message: "최신 카메라 프레임이 없습니다. 입력이 돌아오면 자동으로 다시 확인합니다.")
+        }
     }
 
     func pause() {
+        activeRequested = false
+        frameWatchdog?.invalidate()
+        frameWatchdog = nil
         sceneView.session.pause()
         isRunning = false
         trackingReady = false
         hasDepth = false
         trackingText = "일시 정지"
-        clearMeasurement(message: "다시 시작하면 새 기준점을 정해 주세요.")
+        clearMeasurement(message: "카메라가 돌아오면 지면 기준을 자동으로 다시 확인합니다.")
     }
 
     func resetOrigin() {
-        clearMeasurement(message: "기준으로 삼을 잔디를 가운데 십자선에 맞추세요.")
+        clearMeasurement(message: "지면을 비추세요. 기준 높이를 자동으로 다시 확인합니다.")
     }
 
     /// Samples distinct frame timestamps while reprojecting the same world
@@ -140,7 +164,10 @@ final class TerrainSession: NSObject, ObservableObject, ARSessionDelegate {
 
     private func beginBurst(kind: CaptureKind) {
         if kind != .origin && origin == nil { message = "먼저 기준점을 정해 주세요."; return }
-        guard let reader = prepareReader() else { return }
+        guard let reader = prepareReader() else {
+            automaticScan.completed(success: false, wasOrigin: kind == .origin, now: ProcessInfo.processInfo.systemUptime)
+            return
+        }
         let screenPoints: [CGPoint]
         if kind == .grid {
             let size = sceneView.bounds.size
@@ -161,15 +188,21 @@ final class TerrainSession: NSObject, ObservableObject, ARSessionDelegate {
         var targets: [BurstTarget] = []
         for (index, point) in screenPoints.enumerated() {
             report.attempted += 1
-            switch reader.read(screenPoint: point) {
+            let reading = kind == .origin ? reader.readGroundReference(screenPoint: point) : reader.read(screenPoint: point)
+            switch reading {
             case .success(let observed): targets.append(BurstTarget(seed: observed, gridIndex: kind == .grid ? index : nil))
             case .failure(let reason): report.rejected[reason.rawValue, default: 0] += 1
             }
         }
         guard !targets.isEmpty else {
             latest = nil
+            // A fresh depth buffer can contain no eligible ground pixels. In that
+            // case the previous grid is stale even though camera frames still arrive.
+            if kind == .grid { samples = []; renderMarkers() }
             diagnostics = report
-            message = "미측정 · " + (report.rejected.keys.sorted().first ?? "가까운 잔디를 비추세요.")
+            message = "관측 부족 · " + (report.rejected.keys.sorted().first ?? "가까운 잔디를 비추세요.")
+            scanEvidence = ScanEvidence(referenceEstablished: origin != nil, rejectedReads: report.rejected.values.reduce(0, +))
+            automaticScan.completed(success: false, wasOrigin: kind == .origin, now: ProcessInfo.processInfo.systemUptime)
             return
         }
         let capture = DepthBurst(kind: kind, targets: targets, origin: origin,
@@ -177,7 +210,10 @@ final class TerrainSession: NSObject, ObservableObject, ARSessionDelegate {
         burst = capture
         isCollecting = true
         latest = nil
-        message = "약 1초간 같은 잔디를 비추세요. 여러 프레임을 비교하고 있습니다."
+        if kind == .grid { samples = []; renderMarkers() }
+        scanEvidence = ScanEvidence(referenceEstablished: origin != nil, minimumPointFrames: 1, distinctFrames: 1,
+                                    candidatePoints: targets.count, isCollecting: true)
+        message = kind == .origin ? "지면 기준 확인 중 · 휴대폰을 잠시 유지하세요" : "실제 깊이를 반복 비교하고 있습니다"
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
             guard self?.burst?.id == capture.id else { return }
             self?.finishBurst()
@@ -192,7 +228,8 @@ final class TerrainSession: NSObject, ObservableObject, ARSessionDelegate {
               orientation != .unknown,
               let reader = DepthFrameReader(frame: frame, viewport: sceneView.bounds.size,
                                             orientation: orientation, maxRange: maxRangeMeters,
-                                            minimumConfidence: minimumConfidence) else { return }
+                                            minimumConfidence: minimumConfidence,
+                                            expectedCameraHeight: expectedCameraHeightMeters) else { return }
         capture.lastTimestamp = frame.timestamp
         capture.report.uniqueFrames += 1
         for target in capture.targets where target.observations.count < 12 {
@@ -204,7 +241,8 @@ final class TerrainSession: NSObject, ObservableObject, ARSessionDelegate {
                 capture.report.rejected["동일 지점이 화면에서 벗어났습니다.", default: 0] += 1
                 continue
             }
-            switch reader.read(screenPoint: projected) {
+            let reading = capture.kind == .origin ? reader.readGroundReference(screenPoint: projected) : reader.read(screenPoint: projected)
+            switch reading {
             case .success(let point):
                 guard simd_distance(point.position, target.seed.position) <= 0.12 else {
                     capture.report.rejected["같은 지점의 관측이 일치하지 않습니다.", default: 0] += 1
@@ -215,17 +253,63 @@ final class TerrainSession: NSObject, ObservableObject, ARSessionDelegate {
                 capture.report.rejected[reason.rawValue, default: 0] += 1
             }
         }
+        publishProgress(capture, now: ProcessInfo.processInfo.systemUptime)
         if capture.targets.allSatisfy({ $0.observations.count >= 12 }) { finishBurst() }
     }
 
+    private func publishProgress(_ capture: DepthBurst, now: TimeInterval) {
+        scanEvidence = ScanEvidence(referenceEstablished: origin != nil,
+            minimumPointFrames: capture.targets.map { $0.observations.count }.min() ?? 0,
+            distinctFrames: capture.report.uniqueFrames,
+            validPoints: samples.count, candidatePoints: capture.targets.count,
+            rejectedReads: capture.report.rejected.values.reduce(0, +), isCollecting: true)
+        guard capture.kind == .grid, let origin = capture.origin,
+              now - capture.lastPreviewTimestamp >= 0.2 else { return }
+        capture.lastPreviewTimestamp = now
+        var measured: [TerrainSample] = []
+        var timestamps: [TimeInterval] = []
+        var spreads: [Float] = []
+        for target in capture.targets {
+            guard let estimate = DepthGeometry.robustPosition(target.observations.map(\.position), minimumCount: 8),
+                  let timestamp = DepthGeometry.newestFreshInlierTimestamp(target.observations.map(\.frameTimestamp),
+                        inlierIndices: estimate.inlierIndices, now: now) else { continue }
+            let inliers = estimate.inlierIndices.map { target.observations[$0] }
+            guard let confidence = ARConfidenceLevel(rawValue: inliers.map { $0.confidence.rawValue }.min() ?? 0) else { continue }
+            let representative = inliers[inliers.count / 2]
+            let point = ObservedDepthPoint(position: estimate.position, depth: representative.depth,
+                confidence: confidence, tilt: representative.tilt, frameTimestamp: timestamp)
+            var sample = makeSample(point, origin: origin)
+            sample.gridIndex = target.gridIndex
+            measured.append(sample)
+            timestamps.append(timestamp)
+            spreads.append(estimate.medianDeviation)
+        }
+        samples = measured
+        latest = measured.min(by: { abs(($0.gridIndex ?? 0) - 17) < abs(($1.gridIndex ?? 0) - 17) })
+        var report = capture.report
+        report.accepted = measured.count
+        if !timestamps.isEmpty { report.frameTimestamp = timestamps.min() }
+        report.repeatSpreadMeters = spreads.max()
+        diagnostics = report
+        scanEvidence.validPoints = measured.count
+        renderMarkers()
+    }
     private func finishBurst() {
         guard let capture = burst else { return }
         burst = nil
         isCollecting = false
+        scanEvidence.isCollecting = false
         guard trackingReady, isRunning,
               let activeFrame = sceneView.session.currentFrame,
               case .normal = activeFrame.camera.trackingState else {
-            message = "미측정 · 최신 관측이 없습니다. 가까운 잔디를 비추고 다시 시도하세요."
+            samples = []; latest = nil; scanEvidence.validPoints = 0; renderMarkers()
+            message = "최신 깊이 관측이 없습니다. 자동으로 다시 확인합니다."
+            automaticScan.completed(success: false, wasOrigin: capture.kind == .origin, now: ProcessInfo.processInfo.systemUptime)
+            return
+        }
+        if capture.kind != .origin, let originTimestamp,
+           activeFrame.timestamp - originTimestamp > 30 {
+            resetOrigin()
             return
         }
         var points: [ObservedDepthPoint] = []
@@ -260,7 +344,9 @@ final class TerrainSession: NSObject, ObservableObject, ARSessionDelegate {
         guard !points.isEmpty else {
             latest = nil
             if capture.kind == .grid { samples = []; renderMarkers() }
-            message = "미측정 · 반복 관측이 충분히 일치하지 않았습니다. 가까운 잔디에서 다시 시도하세요."
+            scanEvidence.validPoints = 0
+            message = "관측 부족 · 같은 잔디를 유지하면 자동으로 다시 확인합니다."
+            automaticScan.completed(success: false, wasOrigin: capture.kind == .origin, now: ProcessInfo.processInfo.systemUptime)
             return
         }
         if let point = points.first {
@@ -274,8 +360,8 @@ final class TerrainSession: NSObject, ObservableObject, ARSessionDelegate {
             originTimestamp = points[0].frameTimestamp
             samples = []
             renderMarkers()
-            message = "기준점을 정했습니다. 비교할 잔디를 비추고 ‘이곳 측정’을 누르세요."
-            speak("기준점을 정했습니다. 비교할 잔디를 비추세요.")
+            message = "지면 기준 확인됨 · 주변 높이와 거리를 자동 관측합니다."
+            speak("지면 기준을 확인했습니다. 잔디를 천천히 비추세요.")
         case .target:
             guard let origin = capture.origin else { return }
             let sample = makeSample(points[0], origin: origin)
@@ -293,10 +379,14 @@ final class TerrainSession: NSObject, ObservableObject, ARSessionDelegate {
                 sample.gridIndex = gridIndices[index]
                 return sample
             }
+            latest = samples.min(by: { abs(($0.gridIndex ?? 0) - 17) < abs(($1.gridIndex ?? 0) - 17) })
             renderMarkers()
             message = "35곳 중 \(points.count)곳의 반복 관측이 통과했습니다. 빈 곳은 미측정입니다."
-            speak("\(points.count)곳을 관측했습니다.")
+            // Continuous scans stay quiet; speech is reserved for establishing the reference.
         }
+        scanEvidence.referenceEstablished = origin != nil
+        scanEvidence.validPoints = points.count
+        automaticScan.completed(success: true, wasOrigin: capture.kind == .origin, now: ProcessInfo.processInfo.systemUptime)
         lastMeasurementKind = capture.kind == .origin ? "origin" : capture.kind == .target ? "target" : "grid"
         observationID = UUID()
     }
@@ -311,7 +401,7 @@ final class TerrainSession: NSObject, ObservableObject, ARSessionDelegate {
             return nil
         }
         if let originTimestamp, frame.timestamp - originTimestamp > 30 {
-            clearMeasurement(message: "기준점을 정한 지 30초가 지났습니다. 오랜 이동 오차를 줄이도록 새 기준점을 정해 주세요.")
+            clearMeasurement(message: "지면 기준을 갱신합니다. 휴대폰을 잠시 유지하세요.")
             return nil
         }
         guard ProcessInfo.processInfo.systemUptime - frame.timestamp < 0.5 else {
@@ -323,7 +413,8 @@ final class TerrainSession: NSObject, ObservableObject, ARSessionDelegate {
               let reader = DepthFrameReader(frame: frame, viewport: sceneView.bounds.size,
                                             orientation: orientation,
                                             maxRange: maxRangeMeters,
-                                            minimumConfidence: minimumConfidence) else {
+                                            minimumConfidence: minimumConfidence,
+                                            expectedCameraHeight: expectedCameraHeightMeters) else {
             message = "깊이·센서 품질 정보를 아직 받지 못했습니다."
             return nil
         }
@@ -347,6 +438,8 @@ final class TerrainSession: NSObject, ObservableObject, ARSessionDelegate {
         latest = nil
         samples = []
         diagnostics = TerrainDiagnostics()
+        scanEvidence = ScanEvidence()
+        automaticScan.reset()
         removeMarkers()
         self.message = message
     }
@@ -421,16 +514,39 @@ final class TerrainSession: NSObject, ObservableObject, ARSessionDelegate {
     }
 
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
-        advanceBurst(frame: frame)
-        guard isRunning, frame.timestamp - lastUIFrame > 0.2 else { return }
-        lastUIFrame = frame.timestamp
-        hasDepth = frame.sceneDepth?.confidenceMap != nil
-        if case .normal = frame.camera.trackingState {
+        guard isRunning else { return }
+        let normal: Bool
+        if case .normal = frame.camera.trackingState { normal = true } else { normal = false }
+        let depthAvailable = frame.sceneDepth?.confidenceMap != nil
+        let now = ProcessInfo.processInfo.systemUptime
+        if !normal || !depthAvailable || now < frame.timestamp || now - frame.timestamp >= 0.5 {
+            if origin != nil || burst != nil || !samples.isEmpty {
+                clearMeasurement(message: "깊이·추적 관측이 부족해 기준을 다시 확인합니다.")
+            }
+            trackingReady = normal
+            hasDepth = depthAvailable
+            if !depthAvailable { message = "깊이 정보가 없습니다 · 가까운 지면을 비추세요" }
+        } else {
             trackingReady = true
-            trackingText = hasDepth ? "측정 준비됨" : "깊이 정보 준비 중"
+            hasDepth = true
+            advanceBurst(frame: frame)
+        }
+        let action = automaticScan.nextAction(frameTimestamp: frame.timestamp, now: now,
+            tracking: normal, hasDepth: depthAvailable, originTimestamp: originTimestamp, collecting: burst != nil)
+        switch action {
+        case .acquireOrigin: beginBurst(kind: .origin)
+        case .observeGrid: beginBurst(kind: .grid)
+        case .renewOrigin: resetOrigin()
+        case .none: break
+        }
+        if frame.timestamp - lastUIFrame > 0.2 {
+            lastUIFrame = frame.timestamp
+            trackingText = !normal ? "위치 추적 확인 중" : depthAvailable ? "실제 깊이 수신 중" : "깊이 정보 없음"
+            if origin == nil, burst == nil, automaticScan.phase == .readying {
+                message = "지면 기준 준비 · 깊이 프레임 \(automaticScan.stableDepthFrames)/6"
+            }
         }
     }
-
     func session(_ session: ARSession, cameraDidChangeTrackingState camera: ARCamera) {
         switch camera.trackingState {
         case .normal:
@@ -450,7 +566,7 @@ final class TerrainSession: NSObject, ObservableObject, ARSessionDelegate {
             }
         }
         if !trackingReady {
-            clearMeasurement(message: "추적이 준비되면 기준점을 다시 정해 주세요.")
+            clearMeasurement(message: "추적이 회복되면 지면 기준을 자동으로 다시 확인합니다.")
         }
     }
 
@@ -463,11 +579,17 @@ final class TerrainSession: NSObject, ObservableObject, ARSessionDelegate {
 
     func sessionInterruptionEnded(_ session: ARSession) {
         isRunning = false
-        message = "‘측정 시작’을 눌러 새로 측정해 주세요."
+        if activeRequested { runSession() }
     }
 
     func session(_ session: ARSession, didFailWithError error: Error) {
+        let shouldRecover = activeRequested
         pause()
+        activeRequested = shouldRecover
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self, self.activeRequested, self.sceneView.window != nil else { return }
+            self.runSession()
+        }
         message = "카메라 측정을 시작할 수 없습니다. 권한을 확인한 뒤 다시 시도하세요."
         trackingText = error.localizedDescription
     }
@@ -493,6 +615,7 @@ private final class DepthBurst {
     let origin: SIMD3<Float>?
     var lastTimestamp: TimeInterval
     var report: TerrainDiagnostics
+    var lastPreviewTimestamp: TimeInterval = 0
     init(kind: CaptureKind, targets: [BurstTarget], origin: SIMD3<Float>?,
          timestamp: TimeInterval, report: TerrainDiagnostics) {
         self.kind = kind
@@ -515,7 +638,8 @@ private enum DepthRejection: String, Error {
     case outside = "화면 밖이거나 깊이 정보가 없습니다."
     case lowConfidence = "센서 품질이 부족합니다. 가까운 잔디를 비추세요."
     case range = "측정 거리 범위를 벗어났습니다. 잔디에 조금 더 가까이 가세요."
-    case notGround = "지면을 확인하지 못했습니다. 아래쪽 잔디를 비추세요."
+    case notGround = "촬영 높이에 맞는 지면을 확인하지 못했습니다. 아래쪽 잔디를 비추세요."
+    case groundReference = "넓은 지면 기준이 부족합니다. 가까운 잔디와 설정의 촬영 높이를 확인하세요."
     case edge = "표면 경계이거나 깊이 정보가 고르지 않습니다."
 }
 
@@ -531,6 +655,7 @@ private final class DepthFrameReader {
     let height: Int
     let maxRange: Float
     let minimumConfidence: Int
+    let expectedCameraHeight: Float
     let depthBase: UnsafeMutableRawPointer
     let confidenceBase: UnsafeMutableRawPointer
     var diagnostics: TerrainDiagnostics {
@@ -542,7 +667,7 @@ private final class DepthFrameReader {
     }
 
     init?(frame: ARFrame, viewport: CGSize, orientation: UIInterfaceOrientation,
-          maxRange: Float, minimumConfidence: Int) {
+          maxRange: Float, minimumConfidence: Int, expectedCameraHeight: Float) {
         guard viewport.width > 0, viewport.height > 0,
               let data = frame.sceneDepth, let confidence = data.confidenceMap,
               CVPixelBufferGetPixelFormatType(data.depthMap) == kCVPixelFormatType_DepthFloat32,
@@ -569,6 +694,7 @@ private final class DepthFrameReader {
         self.height = CVPixelBufferGetHeight(data.depthMap)
         self.maxRange = min(5, max(1, maxRange))
         self.minimumConfidence = min(2, max(1, minimumConfidence))
+        self.expectedCameraHeight = min(1.8, max(0.7, expectedCameraHeight))
         self.depthBase = depthBase
         self.confidenceBase = confidenceBase
     }
@@ -608,7 +734,8 @@ private final class DepthFrameReader {
         guard length > 0.00001 else { return .failure(.edge) }
         let upright = min(1, max(0, abs(normal.y / length)))
         let tilt = acos(upright) * 180 / .pi
-        guard tilt <= 35, center.position.y < cameraPosition.y - 0.15 else {
+        guard tilt <= 35, GroundCandidatePolicy.heightMatches(measured: cameraPosition.y - center.position.y,
+                                                                expected: expectedCameraHeight) else {
             return .failure(.notGround)
         }
         let confidenceValue = ([center] + neighbors).map { $0.confidence.rawValue }.min() ?? 0
@@ -619,6 +746,36 @@ private final class DepthFrameReader {
                                            confidence: confidence, tilt: tilt, frameTimestamp: frame.timestamp))
     }
 
+    /// A reference needs a broad, height-consistent observed patch, not one pixel
+    /// on a nearby object. This is geometric rejection, not semantic classification.
+    func readGroundReference(screenPoint: CGPoint) -> Result<ObservedDepthPoint, DepthRejection> {
+        let center: ObservedDepthPoint
+        switch read(screenPoint: screenPoint) {
+        case .success(let point): center = point
+        case .failure(let reason): return .failure(reason)
+        }
+        let dx = viewport.width * 0.12
+        let dy = viewport.height * 0.10
+        let offsets = [CGPoint(x: -dx, y: 0), CGPoint(x: dx, y: 0),
+                       CGPoint(x: 0, y: -dy), CGPoint(x: 0, y: dy),
+                       CGPoint(x: -dx, y: -dy), CGPoint(x: dx, y: -dy),
+                       CGPoint(x: -dx, y: dy), CGPoint(x: dx, y: dy)]
+        var points: [ObservedDepthPoint] = []
+        for offset in offsets {
+            if case .success(let point) = read(screenPoint: CGPoint(x: screenPoint.x + offset.x, y: screenPoint.y + offset.y)),
+               abs(point.position.y - center.position.y) <= 0.12 { points.append(point) }
+        }
+        var span: Float = 0
+        for left in points {
+            for right in points {
+                span = max(span, DepthGeometry.horizontalDistance(from: left.position, to: right.position))
+            }
+        }
+        guard GroundCandidatePolicy.patchSupportsReference(validNeighbors: points.count, horizontalSpan: span) else {
+            return .failure(.groundReference)
+        }
+        return .success(center)
+    }
     private func pixel(x: Int, y: Int) -> (position: SIMD3<Float>, depth: Float, confidence: ARConfidenceLevel)? {
         let depthRow = depthBase.advanced(by: y * CVPixelBufferGetBytesPerRow(depthBuffer))
             .assumingMemoryBound(to: Float32.self)

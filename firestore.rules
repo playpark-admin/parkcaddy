@@ -39,11 +39,20 @@ service cloud.firestore {
     && !exists(/databases/$(database)/documents/users/$(uid)/measurementDeletions/$(recordId))
     && request.resource.data.keys().hasOnly(['schemaVersion','platform','createdAt','consentVersion','metadata'])
     && request.resource.data.schemaVersion == 1
-    && request.resource.data.platform in ['android','ios']
+    && request.resource.data.platform in ['android','ios','webxr']
     && request.resource.data.createdAt is string
     && request.resource.data.createdAt.size() > 0
     && request.resource.data.createdAt.size() <= 40
-    && request.resource.data.consentVersion == '2026-09-27-native-v1'
+    && ((request.resource.data.platform in ['android','ios']
+       && request.resource.data.consentVersion == '2026-09-27-native-v1')
+      || (request.resource.data.platform == 'webxr'
+       && request.resource.data.consentVersion == '2026-09-27-v2'
+       && request.resource.data.metadata.source == 'webxr-depth'
+       && request.resource.data.metadata.terrainMeasured == true
+       && request.resource.data.metadata.collectionConsent.version == '2026-09-27-v2'
+       && request.resource.data.metadata.collectionConsent.grantId is string
+       && request.resource.data.metadata.collectionConsent.grantId.size() > 0
+       && request.resource.data.metadata.collectionConsent.grantId.size() <= 128))
     && request.resource.data.metadata is map
     && request.resource.data.metadata.size() <= 40
     && request.resource.data.metadata.accuracyValidated == false;

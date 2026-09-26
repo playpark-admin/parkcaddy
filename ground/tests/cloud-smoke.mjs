@@ -46,7 +46,8 @@ try {
       otherUser,
       owner,
       db,
-      nativeRef;
+      nativeRef,
+      xrCleanupRecord;
     const restNativeIds = new Set();
     const documentPrefix =
       "projects/" + firebaseConfig.projectId + "/databases/(default)/documents";
@@ -214,6 +215,62 @@ try {
           metadata: { ...native.metadata, accuracyValidated: true },
         }),
       );
+      // Exercise the real WebXR record route through the same durable collector.
+      const xrBase = {
+        id: "synthetic-webxr-" + crypto.randomUUID(),
+        source: "webxr-depth",
+        terrainMeasured: true,
+        accuracyValidated: false,
+        measurementKind: "synthetic-webxr-test",
+        measurement: { distanceM: 1.5, elevationM: 0.03 },
+        points: [
+          { worldX: 1.5, worldY: 0.03, worldZ: 0 },
+          { worldX: 1.25, worldY: 0.02, worldZ: 0.25 },
+        ],
+        course: "",
+        hole: null,
+        createdAt: new Date().toISOString(),
+        cloudStatus: "local",
+      };
+      // Retain source + owner before the request, including lost acknowledgements.
+      xrCleanupRecord = { ...xrBase, ownerUid: owner.uid };
+      await collector.queueRecord(xrBase);
+      await collector.syncPending({ forceRetry: true });
+      const xrRecord = (await storage.listRecords()).find(
+        (entry) => entry.id === xrBase.id,
+      );
+      const xrUploadAcknowledged =
+        xrRecord?.cloudStatus === "uploaded" &&
+        xrRecord.ownerUid === owner.uid &&
+        xrRecord.collectionConsent?.version === "2026-09-27-v2";
+      if (!xrUploadAcknowledged)
+        throw new Error(
+          xrRecord?.collectionError ||
+            "WebXR collection upload not acknowledged",
+        );
+      xrCleanupRecord = xrRecord;
+      const xrRef = doc(db, "users", owner.uid, "measurements", xrRecord.id);
+      const xrOwnerReadDenied = await denied(() => getDoc(xrRef));
+      await collector.deleteCollected(xrRecord.id);
+      const xrDeleted = (await storage.listRecords()).find(
+        (entry) => entry.id === xrRecord.id,
+      );
+      const xrDeleteAcknowledged =
+        xrDeleted?.cloudStatus === "local" &&
+        !xrDeleted.ownerUid &&
+        Boolean(xrDeleted.collectionDeletedAt);
+      const xrLateUploadDenied = await denied(() =>
+        cloud.uploadRecord({ ...xrRecord, cloudStatus: "pending" }),
+      );
+      const xrMarker = doc(
+        db,
+        "users",
+        owner.uid,
+        "measurementDeletions",
+        xrRecord.id,
+      );
+      const xrMarkerReadDenied = await denied(() => getDoc(xrMarker));
+      const xrMarkerDeleteDenied = await denied(() => deleteDoc(xrMarker));
       await collector.revokeConsent({ deleteExisting: true });
       const deleted = (await storage.listRecords()).find(
         (entry) => entry.id === id,
@@ -320,6 +377,12 @@ try {
         crossUserDeleteDenied,
         nativeOwnerReadDenied,
         nativeVerifiedDenied,
+        xrUploadAcknowledged,
+        xrOwnerReadDenied,
+        xrDeleteAcknowledged,
+        xrLateUploadDenied,
+        xrMarkerReadDenied,
+        xrMarkerDeleteDenied,
         deleteAcknowledged,
         remainsRevoked: collector.getConsent().state === "revoked",
         latePhotoWriteDenied,
@@ -337,6 +400,8 @@ try {
     } finally {
       // Every created item is synthetic. Cleanup must succeed before dropping its auth handle.
       await collector.revokeConsent({ deleteExisting: true });
+      // Retry WebXR cleanup even if a late write was unexpectedly accepted.
+      if (xrCleanupRecord) await cloud.removeCloudRecord(xrCleanupRecord);
       if (nativeRef) {
         const batch = writeBatch(db);
         batch.set(doc(db, "users", owner.uid, "measurementDeletions", id), {
@@ -365,6 +430,12 @@ try {
     crossUserDeleteDenied: true,
     nativeOwnerReadDenied: true,
     nativeVerifiedDenied: true,
+    xrUploadAcknowledged: true,
+    xrOwnerReadDenied: true,
+    xrDeleteAcknowledged: true,
+    xrLateUploadDenied: true,
+    xrMarkerReadDenied: true,
+    xrMarkerDeleteDenied: true,
     deleteAcknowledged: true,
     remainsRevoked: true,
     latePhotoWriteDenied: true,
@@ -380,7 +451,7 @@ try {
     lateIosRestDenied: true,
   });
   console.log(
-    "PASS live Firebase: first consent, automatic private collection, owner/cross-user raw reads denied, cross-user mutations denied, native SDK and Android REST commit/iOS REST createDocument accepted, false verified claims denied, atomic deletion receipts, late writes denied, revoke/delete and synthetic account cleanup (content-free receipts retained)",
+    "PASS live Firebase: first consent, automatic private collection, owner/cross-user raw reads denied, cross-user mutations denied, native SDK and Android REST commit/iOS REST createDocument accepted, WebXR collector upload/private read/atomic delete/late-write denial verified, false verified claims denied, atomic deletion receipts, late writes denied, revoke/delete and synthetic account cleanup (content-free receipts retained)",
   );
 } finally {
   await context.close();

@@ -1,5 +1,5 @@
 import { firebaseConfig } from "./firebase-config.js";
-import { COLLECTION_CONSENT_VERSION } from "./collection.mjs";
+import { recordRoute, buildUploadDocument } from "./upload-document.mjs";
 let pending;
 export const cloudConfigured = Boolean(firebaseConfig?.projectId);
 async function connection() {
@@ -54,7 +54,13 @@ async function ownedConnection(record, requireOwner = false) {
   return {
     ...c,
     user,
-    ref: c.doc(c.db, "users", user.uid, "observations", record.id),
+    ref: c.doc(
+      c.db,
+      "users",
+      user.uid,
+      recordRoute(record).collection,
+      record.id,
+    ),
   };
 }
 export async function prepareUpload(record) {
@@ -66,32 +72,10 @@ export async function uploadRecord(record) {
   const c = await ownedConnection(record, true);
   if (record.cloudStatus !== "pending")
     throw new Error("전송 상태를 기기에 먼저 저장해 주세요.");
-  if (
-    record.collectionConsent?.version !== COLLECTION_CONSENT_VERSION ||
-    typeof record.collectionConsent?.grantId !== "string"
-  )
-    throw new Error("해당 촬영 기록의 수집 동의가 필요합니다.");
-  const {
-    image,
-    cloudStatus,
-    ownerUid,
-    collectionError,
-    collectionRetryAt,
-    collectionAttempts,
-    collectionDeletedAt,
-    ...metadata
-  } = record;
-  if (!image?.startsWith("data:image/jpeg;base64,") || image.length > 700000)
-    throw new Error("전송 사진 크기 제한을 초과했어요.");
-  await c.setDoc(c.ref, {
-    schemaVersion: 2,
-    ownerUid: c.user.uid,
-    metadata,
-    image,
-    status: "collected",
-    consentVersion: COLLECTION_CONSENT_VERSION,
-    updatedAt: c.serverTimestamp(),
-  });
+  await c.setDoc(
+    c.ref,
+    buildUploadDocument(record, c.user.uid, c.serverTimestamp()),
+  );
   return c.user.uid;
 }
 // Raw observations are write/delete-only from client SDKs. Administrators use
@@ -104,7 +88,7 @@ export async function removeCloudRecord(record) {
     c.db,
     "users",
     c.user.uid,
-    "observationDeletions",
+    recordRoute(record).deletions,
     record.id,
   );
   const batch = c.writeBatch(c.db);

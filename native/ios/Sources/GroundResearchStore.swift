@@ -13,6 +13,7 @@ final class GroundResearchStore: ObservableObject {
     private var worker: Task<Void, Never>?
     private var retry: Task<Void, Never>?
     private var storageReady = true
+    private var lastRecordedAt: Date?
     private let apiKey = "AIzaSyAEuFJs3RD_TjNDEWJ70FwrTEDEEGOZIf4"
     private let projectID = "parkcaddy-ground-2026"
     private let consentVersion = "2026-09-27-native-v1"
@@ -23,6 +24,9 @@ final class GroundResearchStore: ObservableObject {
         defaults = .standard
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         fileURL = base.appendingPathComponent("GroundResearch/ledger.json")
+        if defaults.object(forKey: "ground.research.lastRecordedAt") != nil {
+            lastRecordedAt = Date(timeIntervalSince1970: defaults.double(forKey: "ground.research.lastRecordedAt"))
+        }
         do {
             try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             if FileManager.default.fileExists(atPath: fileURL.path) {
@@ -66,9 +70,11 @@ final class GroundResearchStore: ObservableObject {
 
     func record(_ terrain: TerrainSession) {
         guard storageReady, consent == .enabled, ledger.consent == .enabled,
-              terrain.diagnostics.accepted > 0 else { return }
+              terrain.diagnostics.accepted > 0, terrain.lastMeasurementKind != "origin",
+              ResearchUploadCadence.allows(lastRecordedAt: lastRecordedAt, now: Date()) else { return }
         let pointSamples = terrain.lastMeasurementKind == "target" ? terrain.latest.map { [$0] } ?? [] : terrain.samples
-        let points: [[String: Any]] = pointSamples.map { point in
+        let ordered = pointSamples.sorted { ($0.gridIndex ?? 0) < ($1.gridIndex ?? 0) }.prefix(35)
+        let points: [[String: Any]] = ordered.map { point in
             ["xMeters": point.worldPosition.x, "yMeters": point.worldPosition.y, "zMeters": point.worldPosition.z,
              "horizontalDistanceMeters": point.distanceMeters, "relativeHeightMeters": point.relativeHeightMeters,
              "sensorConfidenceLevel": point.confidence.rawValue]
@@ -84,6 +90,7 @@ final class GroundResearchStore: ObservableObject {
             "repeatSpreadMillimeters": terrain.diagnostics.repeatSpreadMeters.map { ($0 * 1000) as Any } ?? NSNull(),
             "minimumConfidence": terrain.minimumConfidence,
             "maxRangeMeters": terrain.maxRangeMeters,
+            "expectedCameraHeightMeters": terrain.expectedCameraHeightMeters,
             "origin": origin,
             "points": points,
             "rejected": terrain.diagnostics.rejected,
@@ -99,7 +106,11 @@ final class GroundResearchStore: ObservableObject {
             status = "자동 전송 대기 저장 공간을 확인해 주세요."
             return
         }
-        if persist() { flush() }
+        if persist() {
+            lastRecordedAt = Date()
+            defaults.set(lastRecordedAt?.timeIntervalSince1970, forKey: "ground.research.lastRecordedAt")
+            flush()
+        }
     }
 
     func flush() {

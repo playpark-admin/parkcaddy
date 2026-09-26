@@ -28,6 +28,8 @@ public final class MainActivity extends AppCompatActivity {
   private MeasurementPolicy policy;
   private boolean active, askedInstall = true, permissionPending, exporting;
   private Button download;
+  private ProgressBar scanBar;
+  private long availabilityStarted;
   private long lastUi;
   private String fullGuidance = "발 앞 지면을 약 2초 비춘 뒤, 같은 지면을 보며 폰을 천천히 좌우로 움직이세요.";
 
@@ -35,7 +37,7 @@ public final class MainActivity extends AppCompatActivity {
       new ActivityResultContracts.RequestPermission(), granted -> {
         permissionPending = false;
         if (granted) start();
-        else setGuidance("카메라 권한이 필요합니다 · 다시 측정을 눌러 주세요.");
+        else showScan(ScanProgress.blocked("설정 → 사용자 보정 → 카메라 권한에서 허용해 주세요"));
       });
   private final ActivityResultLauncher<String> saveData = registerForActivityResult(
       new ActivityResultContracts.CreateDocument("application/zip"), uri -> {
@@ -80,17 +82,18 @@ public final class MainActivity extends AppCompatActivity {
     hud.reference = preferences.getBoolean("reference", false);
     hud.largeLabels = preferences.getBoolean("large_labels", true);
     status = overlayLabel("발 앞 지면을 비춰 주세요", 18);
-    status.setMaxLines(2);
+    status.setMaxLines(3);
     status.setGravity(Gravity.CENTER_VERTICAL);
     status.setEllipsize(android.text.TextUtils.TruncateAt.END);
-    renderer = new ArCameraRenderer((scene, message) -> {
+    renderer = new ArCameraRenderer((scene, message, progress) -> {
       long now = android.os.SystemClock.elapsedRealtime();
       if (now - lastUi < 150) return;
       lastUi = now;
       runOnUiThread(() -> {
-        if (isDestroyed()) return;
+        if (isDestroyed() || !active) return;
         hud.setScene(scene);
-        setGuidance(message);
+        fullGuidance=message;
+        showScan(progress);
         if (recordInfo != null && !exporting) recordInfo.setText(recorder.status());
         if (debugInfo != null) debugInfo.setText(renderer.debugInfo);
         if (referenceInfo != null) referenceInfo.setText(renderer.referenceInfo);
@@ -125,15 +128,15 @@ public final class MainActivity extends AppCompatActivity {
     controls.addView(top, topParams);
 
     LinearLayout bottom = new LinearLayout(this);
-    bottom.setGravity(Gravity.CENTER_VERTICAL);
-    bottom.setPadding(dp(14), dp(4), dp(4), dp(4));
+    bottom.setOrientation(LinearLayout.VERTICAL);
+    bottom.setPadding(dp(14), dp(7), dp(14), dp(9));
     bottom.setBackground(round(0xDC162A2D, 16));
-    bottom.addView(status, new LinearLayout.LayoutParams(0, -2, 1));
-    Button reset = overlayButton("다시 측정");
-    LinearLayout.LayoutParams resetParams = new LinearLayout.LayoutParams(-2, -2);
-    resetParams.leftMargin = dp(8);
-    bottom.addView(reset, resetParams);
-    reset.setOnClickListener(view -> resetMeasurement());
+    bottom.addView(status, new LinearLayout.LayoutParams(-1, -2));
+    scanBar=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);
+    scanBar.setProgressTintList(android.content.res.ColorStateList.valueOf(0xFFB4DDD0));
+    scanBar.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(0xFFB4DDD0));
+    bottom.addView(scanBar,new LinearLayout.LayoutParams(-1,dp(5)));
+    showScan(ScanProgress.waiting("지면 자동 스캔 준비", "발 앞 지면을 비추면 자동으로 시작합니다",0));
     FrameLayout.LayoutParams bottomParams = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
     bottomParams.setMargins(dp(12), 0, dp(12), dp(8));
     controls.addView(bottom, bottomParams);
@@ -153,16 +156,20 @@ public final class MainActivity extends AppCompatActivity {
   }
 
   private void setGuidance(String message) {
-    fullGuidance = message;
-    String compact = message.split("\\n", 2)[0];
-    if (message.contains("관측 불일치")) compact = "관측값이 달라요 · 같은 지면을 다시 비춰 주세요";
-    else if (message.contains("기존 기준점을 놓쳤습니다")) compact = "기준점을 놓쳤어요 · 같은 지면을 다시 비춰 주세요";
-    else if (message.contains("아직 높이를 측정하지 못했습니다")) compact = "지면을 보며 폰을 천천히 좌우로 움직이세요";
-    else if (message.contains("기준 높이를 안정화")) compact = "같은 지면을 약 2초 비춰 주세요";
-    status.setText(compact);
-    status.setContentDescription(message);
+    fullGuidance=message;
+    showScan(ScanProgress.waiting("지면 자동 스캔",message,0));
   }
-
+  private void showScan(ScanProgress progress) {
+    String text=progress.title+"\n"+progress.detail;
+    fullGuidance=text;
+    if(!android.text.TextUtils.equals(status.getText(),text))status.setText(text);
+    status.setContentDescription(text);
+    if(scanBar==null)return;
+    scanBar.setVisibility(progress.indeterminate||progress.maximum>0?android.view.View.VISIBLE:android.view.View.GONE);
+    scanBar.setIndeterminate(progress.indeterminate);
+    if(!progress.indeterminate&&progress.maximum>0){scanBar.setMax(progress.maximum);scanBar.setProgress(progress.value);}
+    scanBar.setContentDescription(progress.title+" · "+progress.detail);
+  }
   private void showSettings() {
     LinearLayout content = column();
     content.addView(label("지면 측정을 위한 보조 도구입니다. 향후 스코어카드에 연결할 수 있습니다.", 17));
@@ -179,6 +186,10 @@ public final class MainActivity extends AppCompatActivity {
 
   private void showCalibration() {
     LinearLayout content = column();
+    if(checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED){
+      Button cameraPermission=button("카메라 권한 설정");content.addView(cameraPermission,spaced());
+      cameraPermission.setOnClickListener(view->startActivity(new android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,android.net.Uri.parse("package:"+getPackageName()))));
+    }
     heading(content, "기준 높이");
     content.addView(label("처음 안정적으로 확인한 지면을 0 cm로 사용합니다. 카메라를 드는 높이와 움직임은 AR 센서가 추정하므로 키나 기본 높이를 입력할 필요가 없습니다.", 18));
     referenceInfo = label(renderer.referenceInfo, 18);
@@ -218,9 +229,9 @@ public final class MainActivity extends AppCompatActivity {
     addToggle(content, "높낮이 색 표시", "heat", hud.heat, on -> { hud.heat = on; hud.invalidate(); });
     addToggle(content, "측정 숫자 크게 보기", "large_labels", hud.largeLabels, on -> { hud.largeLabels = on; hud.resetLabels(); hud.invalidate(); });
     addToggle(content, "참고 평면 표시", "reference", hud.reference, on -> { hud.reference = on; hud.resetLabels(); hud.invalidate(); });
-    content.addView(label("점선 참고 평면은 높이를 측정한 결과가 아닙니다. 빈 곳은 미측정 위치이며, ‘이전 관측’은 3초 이상 갱신되지 않은 값입니다.", 17));
+    content.addView(label("점선 참고 평면은 높이를 측정한 결과가 아닙니다. 빈 곳은 미측정 위치입니다. 3초 이상 갱신되지 않은 높이나 추적을 잃은 상태의 측정값은 숨깁니다.", 17));
     heading(content, "사용 방법");
-    content.addView(label("① 멈춰 서서 발 앞 지면을 약 2초 비춥니다.\n② 같은 지면을 보며 폰을 좌우 10–20 cm 천천히 움직입니다. 회전만 하지 않습니다.\n③ 지면을 살펴본 뒤 닫기를 누릅니다. 현재 배포판에서는 지면 확인 화면을 종료합니다.", 18));
+    content.addView(label("① 멈춰 서서 발 앞 지면을 비추면 자동으로 스캔합니다.\n② 같은 지면을 보며 폰을 좌우 10–20 cm 천천히 움직이면 관측을 보정하고 안정된 격자부터 높이·거리를 자동 표시합니다. 회전만 하지 않습니다.\n③ 지면을 살펴본 뒤 닫기를 누릅니다. 현재 배포판에서는 지면 확인 화면을 종료합니다.", 18));
     heading(content, "현재 안내");
     content.addView(label(fullGuidance, 18));
     panel("화면과 안내", content, true);
@@ -379,28 +390,32 @@ public final class MainActivity extends AppCompatActivity {
   private void start() {
     if (active || surface == null) return;
     if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-      if (!permissionPending) { permissionPending = true; permission.launch(Manifest.permission.CAMERA); }
+      if (!permissionPending && !preferences.getBoolean("camera_permission_asked",false)) {
+        preferences.edit().putBoolean("camera_permission_asked",true).apply();
+        permissionPending = true; permission.launch(Manifest.permission.CAMERA);
+      } else if(!permissionPending)showScan(ScanProgress.blocked("설정 → 사용자 보정 → 카메라 권한에서 허용해 주세요"));
       return;
     }
     try {
       if (session == null) {
         ArCoreApk.Availability availability = ArCoreApk.getInstance().checkAvailability(this);
         if (availability.isTransient()) {
-          setGuidance("기기 지원을 확인하고 있습니다");
+          long now=android.os.SystemClock.elapsedRealtime();if(availabilityStarted==0)availabilityStarted=now;
+          showScan(ScanProgress.waiting("기기 지원 확인 중","연결을 확인해 주세요 · AR 지원 확인 후 자동 시작합니다",now-availabilityStarted));
           status.postDelayed(() -> { if (!isFinishing() && !isDestroyed() && getLifecycle().getCurrentState().isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) start(); }, 500);
           return;
         }
-        if (!availability.isSupported()) { setGuidance("이 폰은 AR 지면 측정을 지원하지 않습니다"); return; }
+        if (!availability.isSupported()) { showScan(ScanProgress.blocked("ARCore 깊이 지원 기기에서 열어 주세요 · 이 폰에는 측정값을 표시하지 않습니다")); return; }
         if (ArCoreApk.getInstance().requestInstall(this, askedInstall) == ArCoreApk.InstallStatus.INSTALL_REQUESTED) { askedInstall = false; return; }
         Session candidate = new Session(this);
-        if (!candidate.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) { candidate.close(); setGuidance("이 폰은 깊이 측정을 지원하지 않습니다"); return; }
+        if (!candidate.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) { candidate.close(); showScan(ScanProgress.blocked("이 폰은 깊이를 지원하지 않습니다 · ARCore Depth 지원 기기를 사용해 주세요")); return; }
         Config config = new Config(candidate); config.setDepthMode(Config.DepthMode.AUTOMATIC); config.setFocusMode(Config.FocusMode.AUTO); config.setPlaneFindingMode(Config.PlaneFindingMode.HORIZONTAL);
         candidate.configure(config); session = candidate;
       }
       session.resume(); renderer.session = session; renderer.rotation = getWindowManager().getDefaultDisplay().getRotation(); surface.onResume(); active = true;
       if(!cloud.decided())requestCloudConsent(null);
-    } catch (Exception error) { android.util.Log.e("ParkCaddy", "Start", error); setGuidance("시작하지 못했습니다 · 다시 측정을 눌러 주세요\n" + error.getClass().getSimpleName()); }
+    } catch (Exception error) { android.util.Log.e("ParkCaddy", "Start", error); showScan(ScanProgress.blocked("다른 카메라 앱을 닫은 뒤 앱을 다시 열어 주세요 · "+error.getClass().getSimpleName())); }
   }
-  @Override protected void onPause() { if(cloud!=null)cloud.foreground(false); if (surface != null) surface.onPause(); if (session != null) session.pause(); active = false; super.onPause(); }
+  @Override protected void onPause() { if(renderer!=null)renderer.resetRequested=true; if(hud!=null)hud.setScene(new TerrainHudView.Scene(new java.util.ArrayList<>())); if(cloud!=null)cloud.foreground(false); if (surface != null) surface.onPause(); if (session != null) session.pause(); active = false; super.onPause(); }
   @Override protected void onDestroy() { if (renderer != null) renderer.session = null; if (recorder != null) recorder.close(); if (session != null) session.close(); super.onDestroy(); }
 }

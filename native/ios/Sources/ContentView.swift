@@ -48,8 +48,7 @@ struct GroundMeasurementView: View {
         .tint(.white)
         .sheet(isPresented: $showSettings) {
             TerrainSettingsView(terrain: terrain, capture: capture, research: research,
-                                onPhoto: openPhotoCapture,
-                                onGrid: { showSettings = false; terrain.captureGrid() })
+                                onPhoto: openPhotoCapture)
         }
         .fullScreenCover(isPresented: $showCamera, onDismiss: resumeCamera) {
             CameraCaptureView { image in capture.save(image: image) }.ignoresSafeArea()
@@ -91,13 +90,6 @@ struct GroundMeasurementView: View {
                 .padding(.horizontal, 14).frame(minHeight: 44)
                 .background(.black.opacity(0.6), in: Capsule())
             Spacer()
-            if supportsDepth, terrain.origin != nil {
-                Button { terrain.captureGrid() } label: {
-                    Image(systemName: "square.grid.3x3").font(.title2)
-                        .frame(width: 52, height: 52)
-                        .background(.black.opacity(0.6), in: Circle())
-                }.disabled(!terrain.canMeasure).accessibilityLabel("주변 그리드 높이와 거리 측정")
-            }
             Button { showSettings = true } label: {
                 Image(systemName: "gearshape").font(.title2)
                     .frame(width: 52, height: 52)
@@ -107,71 +99,39 @@ struct GroundMeasurementView: View {
     }
 
     private var cameraControls: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 8) {
             if supportsDepth {
-                if terrain.trackingReady, let result = terrain.latest {
-                    HStack(alignment: .firstTextBaseline, spacing: 18) {
-                        Text(String(format: "%.2f m", result.distanceMeters))
-                        Text(String(format: "%@ %.1f cm", result.relativeHeightMeters >= 0 ? "높음" : "낮음",
-                                    abs(result.relativeHeightMeters) * 100))
-                    }
-                    .font(.title2.bold()).minimumScaleFactor(0.7)
-                    .accessibilityLabel("기준점과 비교한 수평 거리 및 상대 높이")
-                }
-                Text(measurementHint).font(.headline).multilineTextAlignment(.center)
+                Text(terrain.message).font(.headline).multilineTextAlignment(.center)
                     .accessibilityAddTraits(.updatesFrequently)
                 if terrain.isCollecting {
-                    ProgressView("반복 관측 중").tint(.white).frame(minHeight: 54)
-                } else {
-                    HStack(spacing: 10) {
-                        if terrain.origin != nil {
-                            Button("다시") { terrain.resetOrigin() }
-                                .font(.headline).frame(minWidth: 64, minHeight: 54)
-                                .background(.white.opacity(0.16), in: RoundedRectangle(cornerRadius: 12))
-                                .accessibilityLabel("기준점 다시 지정")
-                        }
-                        Button(action: measure) {
-                            Text(!terrain.isRunning ? "카메라 시작" : terrain.origin == nil ? "기준점 지정" : "이곳 측정")
-                                .font(.title3.bold()).frame(maxWidth: .infinity, minHeight: 54)
-                                .foregroundStyle(.black)
-                                .background(.white, in: RoundedRectangle(cornerRadius: 12))
-                        }.disabled(terrain.isRunning && !terrain.canMeasure)
-                    }
+                    ProgressView(value: terrain.scanEvidence.repetitionFraction)
+                        .tint(.white)
+                        .accessibilityLabel("실제 반복 깊이 관측")
+                        .accessibilityValue("지점당 최소 \(terrain.scanEvidence.minimumPointFrames)회, 목표 12회")
+                    Text("실제 프레임 \(terrain.scanEvidence.distinctFrames)개 · 지점당 최소 \(terrain.scanEvidence.minimumPointFrames)/12회")
+                        .font(.subheadline)
+                }
+                HStack {
+                    Text(!terrain.hasDepth ? "유효 깊이 대기" : terrain.scanEvidence.referenceEstablished ? "지면 기준 확인됨" : "지면 기준 확인 중")
+                    Spacer()
+                    Text("실측 \(terrain.samples.count)/35곳")
+                }.font(.subheadline)
+                if terrain.trackingReady, let result = terrain.latest {
+                    Text(String(format: "%.2f m · %@ %.1f cm", result.distanceMeters,
+                                result.relativeHeightMeters >= 0 ? "높음" : "낮음", abs(result.relativeHeightMeters) * 100))
+                        .font(.title3.bold()).minimumScaleFactor(0.75)
+                        .accessibilityLabel("관측된 가운데 근처 지점의 기준점 대비 수평 거리 및 높이")
                 }
             } else {
-                Text(photoCamera.isRunning ? "가운데 잔디를 사진으로 기록하세요" : photoCamera.status)
+                Text("이 iPhone에서는 자동 높이 측정을 지원하지 않습니다")
                     .font(.headline).multilineTextAlignment(.center)
-                Button {
-                    if photoCamera.isRunning { photoCamera.takePhoto { capture.save(image: $0) } }
-                    else { photoCamera.start() }
-                } label: {
-                    Text(photoCamera.isRunning ? (photoCamera.isCapturing ? "저장 중" : "사진 기록") : "카메라 시작")
-                        .font(.title3.bold()).frame(maxWidth: .infinity, minHeight: 54)
-                        .foregroundStyle(.black)
-                        .background(.white, in: RoundedRectangle(cornerRadius: 12))
-                }.disabled(photoCamera.isCapturing)
-                Text(capture.savedCount > 0 ? capture.status : "사진 기록 모드 · 높낮이는 미측정")
-                    .font(.footnote).multilineTextAlignment(.center)
+                Text(photoCamera.isRunning ? "LiDAR 깊이 정보가 없어 카메라 화면만 표시합니다." : photoCamera.status)
+                    .font(.subheadline).multilineTextAlignment(.center)
             }
         }
         .foregroundStyle(.white).padding(14)
         .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 16))
     }
-
-    private var measurementHint: String {
-        if terrain.isCollecting { return "약 1초간 같은 잔디를 비추세요" }
-        if !terrain.isRunning { return terrain.message }
-        if !terrain.trackingReady || !terrain.hasDepth { return terrain.trackingText }
-        if terrain.latest != nil { return "기준점과 비교한 상대값" }
-        return terrain.message
-    }
-
-    private func measure() {
-        if !terrain.isRunning { terrain.start() }
-        else if terrain.origin == nil { terrain.captureOrigin() }
-        else { terrain.captureTarget() }
-    }
-
     private func resumeCamera() {
         guard isVisible, scenePhase == .active, !showCamera, research.consent != .undecided else { return }
         capture.activate()
@@ -187,7 +147,11 @@ struct GroundMeasurementView: View {
     }
 
     private func openPhotoCapture() {
-        guard supportsDepth else { showSettings = false; return }
+        guard supportsDepth else {
+            photoCamera.takePhoto { capture.save(image: $0) }
+            showSettings = false
+            return
+        }
         guard UIImagePickerController.isSourceTypeAvailable(.camera),
               AVCaptureDevice.authorizationStatus(for: .video) == .authorized else {
             capture.cameraUnavailable(); return
@@ -215,7 +179,6 @@ private struct TerrainSettingsView: View {
     @ObservedObject var capture: FieldCaptureStore
     @ObservedObject var research: GroundResearchStore
     let onPhoto: () -> Void
-    let onGrid: () -> Void
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -229,11 +192,7 @@ private struct TerrainSettingsView: View {
                 Section("측정 연구") {
                     NavigationLink("실제 관측 데이터 · 분석") { TerrainAnalysisView(terrain: terrain) }
                     NavigationLink("계산식 · 물리적 한계") { measurementPrinciples }
-                    if terrain.capability == .supported {
-                        Button("주변 35곳 추가 관측", action: onGrid).disabled(!terrain.canMeasure || terrain.origin == nil)
-                        Text("카메라의 그리드 버튼으로도 관측할 수 있습니다. 실제로 통과한 지점의 선·거리·높이만 표시하며 빈 곳은 채우지 않습니다.")
-                            .font(.footnote).foregroundStyle(.secondary)
-                    }
+
                 }
                 Section {
                     Text("스코어카드에 넣을 지면 확인 화면입니다. 현재는 시험 앱에서 실행하며, 실제 스코어카드 연결은 별도 단계입니다.")
@@ -248,17 +207,19 @@ private struct TerrainSettingsView: View {
     private var calibrationSettings: some View {
         Form {
             Section("높이 기준") {
-                Label("지정한 지면 기준점 = 0 cm", systemImage: "mappin")
+                Label("자동 확인한 지면 기준 = 0 cm", systemImage: "mappin")
                 Text("높낮이는 같은 카메라 세션 안에서 기준점과 비교합니다. 해발고도나 GPS 고도가 아닙니다.")
                 Button("기준점 초기화") { terrain.resetOrigin() }.disabled(terrain.origin == nil)
             }
             Section("카메라 기본 높이") {
-                Text("LiDAR 측정에는 수동 높이 입력이 필요하지 않습니다.").font(.headline)
-                Text("미터 단위 깊이와 카메라 내부 파라미터로 거리를 계산합니다. 사용자의 키나 촬영 높이를 비율로 곱하면 실제 센서 측정값을 왜곡하므로 적용하지 않습니다.")
+                Text(String(format: "휴대폰을 든 높이 참고값 %.1f m", terrain.expectedCameraHeightMeters)).font(.headline)
+                Slider(value: $terrain.expectedCameraHeightMeters, in: 0.7...1.8, step: 0.1)
+                    .accessibilityLabel("지면에서 휴대폰까지의 대략적인 높이")
+                Text("거리와 높이는 LiDAR 실제 깊이로 계산합니다. 촬영 높이 참고값은 높은 물체를 지면으로 오인하지 않도록 ±30 cm 범위의 지면 후보를 고르는 데만 사용합니다. 측정 좌표에 비율로 곱하지 않습니다.")
                 Text("사진만 기록하는 기기에서는 촬영 높이를 입력해도 정밀 고저차를 구할 수 없어 높낮이를 미측정으로 남깁니다.")
             }
             Section("사용자가 맞출 조건") {
-                Text("가까운 잔디를 비추고 측정 중에는 같은 지점을 유지하세요. 기준점을 정한 뒤 30초 이내에 비교하고, 추적이 끊기거나 위치를 크게 옮기면 기준점을 다시 정하세요.")
+                Text("잔디를 비추면 넓은 지면 후보를 자동 확인하고 반복 관측합니다. 관측 중에는 잠시 같은 곳을 유지하세요. 기준은 30초마다 자동 갱신하며 깊이·추적이 끊기면 표시를 지우고 자동 복구합니다.")
                 Text("현재 버전은 기준자에 의한 장치별 편향 보정을 아직 제공하지 않습니다.")
             }
         }.navigationTitle("높이 기준 · 보정").navigationBarTitleDisplayMode(.inline)
@@ -274,7 +235,7 @@ private struct TerrainSettingsView: View {
                 Text(String(format: "카메라에서 최대 %.1f m", terrain.maxRangeMeters))
                 Slider(value: $terrain.maxRangeMeters, in: 1...5, step: 0.5)
                     .accessibilityLabel("최대 측정 거리")
-                Text("조건을 바꾸면 기준점을 다시 정합니다. 센서 품질 등급은 정확도 확률이 아니며 기본 3 m는 운영 범위입니다.")
+                Text("조건을 바꾸면 지면 기준을 자동으로 다시 확인합니다. 센서 품질 등급은 정확도 확률이 아니며 기본 3 m는 운영 범위입니다.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
             Section("사용 안내") {
@@ -291,15 +252,15 @@ private struct TerrainSettingsView: View {
                 Text(capture.locationText).font(.subheadline)
                 Text("GPS는 구장 검색에만 사용합니다. GPS 고도로 지면의 높낮이를 계산하지 않습니다.")
                     .font(.footnote).foregroundStyle(.secondary)
-                Button("사진 촬영으로 이동", action: onPhoto)
+                Button("참고 사진 기록하기", action: onPhoto)
                 if terrain.capability == .supported {
-                    Text("사진 촬영 후에는 새 측정 세션을 시작하고 기준점을 다시 정합니다.")
+                    Text("사진 촬영 후에는 새 측정 세션에서 지면 기준을 자동 확인합니다.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }
             Section("관리자 연구용 측정 수치") {
                 Toggle("측정 수치 자동 공유", isOn: Binding(get: { research.consent == .enabled }, set: research.decideConsent))
-                Text("동의한 경우 높이·거리·센서 품질만 자동 전송합니다. 관리자가 원자료를 확인하며 사용자에게 전송 목록을 표시하지 않습니다. 사진과 GPS는 서버로 전송하지 않습니다.")
+                Text("동의한 경우 통과한 관측의 높이·거리·센서 품질만 최소 30초 간격으로 자동 전송합니다. 관리자가 원자료를 확인하며 사용자에게 전송 목록을 표시하지 않습니다. 사진과 GPS는 서버로 전송하지 않습니다.")
                     .font(.footnote).foregroundStyle(.secondary)
                 Text(research.status).font(.subheadline)
                 Button("공유 중지 및 이 기기의 서버 기록 삭제", role: .destructive) { research.revokeAndDelete() }
@@ -329,6 +290,7 @@ private struct TerrainSettingsView: View {
                 Text("L이 20 cm 미만이면 경사를 표시하지 않습니다. 두 점 사이 평균 경사는 그 사이 전체 지면 굴곡을 뜻하지 않습니다. GPS 고도나 미관측 보간값은 사용하지 않습니다.")
             }
             Section("빠른 반복 관측과 보정") {
+                Text("지면 기준은 촬영 높이 조건과 주변 8곳 중 최소 7곳의 실측 깊이, 30 cm 이상의 수평 범위로 확인합니다. 이웃 높이 차는 12 cm 이내이며 국소 법선 필터도 통과해야 합니다. 이는 물체 의미 분류가 아닌 기하학적 후보 제외입니다. 낮고 넓은 물체를 항상 구분한다고 보장하지 않습니다.")
                 Text("동일 지점을 다른 프레임에 재투영해 비교합니다. 최소 70 ms 간격, 목표 12회, 2.5초 제한이며 공간 이상값 제외 후 8회 이상을 요구합니다.")
                 Text("좌표별 중앙값 c를 구한 뒤 r = median(‖pᵢ−c‖)를 계산합니다. r > 25 mm이면 거부하고 max(10 mm, 3r) 밖의 점을 제외합니다. 이 방사 편차는 1차원 MAD나 표준편차와 다릅니다.")
                 Text("통과한 관측의 타임스탬프만 최신성에 사용합니다. 최근 프레임이 제외되었으면 이전 관측을 새 값처럼 표시하지 않습니다.")
@@ -350,6 +312,8 @@ private struct TerrainAnalysisView: View {
         Form {
             Section("실제 관측 상태") {
                 LabeledContent("추적", value: terrain.trackingText)
+                LabeledContent("지점당 반복 관측 최소", value: "\(terrain.scanEvidence.minimumPointFrames) / 12회")
+                LabeledContent("진행 중 통과 지점", value: "\(terrain.scanEvidence.validPoints)곳")
                 LabeledContent("깊이 입력", value: terrain.capability == .supported ? "원시 sceneDepth" : "사용 불가 · 사진 기록")
                 LabeledContent("깊이 해상도", value: terrain.diagnostics.depthResolution)
                 LabeledContent("깊이 픽셀 조회 횟수", value: "\(terrain.diagnostics.attempted)")

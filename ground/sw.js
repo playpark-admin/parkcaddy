@@ -1,9 +1,12 @@
-const CACHE = "parkcaddy-ground-v2-2",
+const CACHE = "parkcaddy-ground-v2-3",
   SHELL = [
     "./",
     "./index.html",
     "./styles.css",
     "./app.mjs",
+    "./webxr-scan.mjs",
+    "./terrain-core.mjs",
+    "./upload-document.mjs",
     "./physics.mjs",
     "./collection.mjs",
     "./diagnostics.mjs",
