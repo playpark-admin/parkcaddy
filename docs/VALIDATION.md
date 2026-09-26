@@ -1,24 +1,30 @@
-# 검증 기록 — 2026-09-27
+# 검증 기록 — 2026-09-27 / 2.1
+검사 대상 네이티브·웹 실행 코드: 3a15a88f22e5c5b4fcac0d592806e96399b33ad0. 이후 변경은 서버 REST 검증 추가, 고지·오류 안내 문구와 결과 문서입니다.
 
-## 실행 완료
-- 원본 Git 전체 이력 번들: verify 통과.
-- 웹 물리 계산: Node 7개 테스트 통과. 입력 구간 전체 포괄, 잘못된 값과 지평선·거리 초과 차단.
-- Android: 순수 Java 호스트 검사 9개 통과, Java 소스 15개 문법 검사 통과. 신규 필터/반복 timestamp/기록 동의 포함.
-- 웹 브라우저: 가상 카메라·GPS로 촬영·기기 저장, 설정 재접속 유지, 모바일 가로 넘침 없음, 동의창, 오프라인 화면 검사 통과.
-- 실제 새 Firebase: 익명 로그인, 동의 후 가상 사진/위치 전송, 본인 읽기, 타인 읽기 거부, verified 상태 위조 거부, 서버 기록 삭제 통과. 테스트용 계정 정리.
-- 전송 상태: pending/uncertain/deleting을 먼저 저장. 모의 실패·응답 유실·저장 실패·중복 작업 등 9개 시나리오 통과.
-- Firestore 규칙: 공식 배포 컴파일 및 서울 리전 배포 완료.
-- Git 변경 형식 검사 통과.
+## 실행 결과
+- 웹 계산·관측 통계·부모 창 출처 확인·동의/삭제 상태: Node 테스트 24개 통과.
+- 웹 화면: 휴대폰 세로·가로 및 데스크톱에서 video가 창 전체를 차지하는지 확인. 그리드, 큰 글씨 유지, 실제 센서 진단, 카메라 종료, 오프라인 화면 통과.
+- 새 Firebase 실서버: 최초 동의 이전 미전송, 동의 후 자동 수집, 소유자·타인 원자료 읽기 차단, 타인 쓰기/삭제 차단, 검증 완료 상태 위조 차단 통과.
+- Android 실제 REST commit 및 iOS 실제 REST createDocument 형식으로 가상 측정값 저장 성공.
+- 삭제표식 저장+원자료 삭제 원자 처리 후 웹/Android/iOS 지연 업로드 모두 거부됨. 삭제표식 열람·삭제·임의 데이터 추가도 거부됨.
+- 가상 사진·위치·수치와 시험 익명 계정 정리 완료. 내용 없는 최소 삭제표식은 재생성 방지를 위해 유지.
+- Firebase 규칙 컴파일 및 Hosting 배포 완료. 배포 주소에서도 화면·자동수집 검사를 통과.
+- Android: GitHub Actions의 JDK17/SDK35 APK 빌드, lint, 순수 Java 호스트 검사 10개 성공.
+- iOS: unsigned simulator build 성공, XCTest 22개 실행·실패 0. 기하/반복관측 13개와 동의·삭제·직렬화 9개 모두 통과.
+- 원본 백업 번들 검증은 이전 단계에서 통과.
 
-## 아직 이 결과가 의미하지 않는 것
-실제 잔디·햇빛·움직임·카메라 보정 조건에서 거리/높이 정밀도를 검증한 것은 아닙니다.
-가상 브라우저 센서는 iPhone Safari/Android Chrome 실제 하드웨어 검사를 대신하지 않습니다.
-Windows 로컬에 JDK17/Android SDK 및 Xcode가 없어 네이티브 APK 빌드/lint/iOS XCTest를 여기서 실행하지 않았습니다. GitHub Actions에서 별도 빌드 검증을 실행하도록 구성했습니다. 실제 상태는 Actions 결과를 확인합니다.
+[코드 빌드 및 검사 실행](https://github.com/playpark-admin/parkcaddy/actions/runs/36270205267)
 
-## GitHub 원격 검증 완료
-코드 fefcbd33644cff1978790aacd47ae353dd3c3fc8 기준 [실행 결과](https://github.com/playpark-admin/parkcaddy/actions/runs/36267925930).
-- 웹 수학 7개 성공.
-- Android JDK17/SDK35: 9개 Java 호스트 검사, assembleDebug, lintDebug 성공. 테스트 APK 생성.
-- iOS Xcode16.4: unsigned simulator build 성공, XCTest 실제 13개 실행·실패 0.
-- 실제 배포 URL에서도 가상 사진·위치로 동의/전송/접근제어/삭제 검증 성공.
-- Windows 로컬 미실행 제한은 원격 빌드로 보완했습니다. 실기기와 현장 정확도 검증은 여전히 별도입니다.
+## 설치 산출물
+Android 개발용 APK: 작업 폴더 deliverables/ground-v2.1/android/app-debug.apk.
+SHA-256: 943B58697A6AFFA089EF5EED538F969B353354F0CB4F3D58AE3EAE16ADFFF374.
+
+iOS 산출물은 서명되지 않은 시뮬레이터 앱입니다. iPhone 설치용 서명·프로비저닝·스토어 배포를 수행한 것은 아닙니다.
+
+## 해석 범위
+실제 잔디·햇빛·기기 움직임과 렌즈 보정 조건의 cm 정확도 검증이 아닙니다. 가상 브라우저 카메라와 시뮬레이터는 실기기의 AR/LiDAR/GPS를 대신하지 않습니다. 네이티브 REST 검사는 실제 서버의 요청 형식·접근제어를 확인한 것이며, 실기기 카메라에서 서버까지의 현장 검증과 구분합니다.
+
+웹 격자는 조준 안내이며 실제 지형 격자가 아닙니다. 네이티브 AR 격자는 통과한 깊이 관측을 표시합니다. 미관측 지점이나 지원하지 않는 환경의 높이값을 만들어 표시하지 않습니다.
+
+## 이전 버전 이력
+2.0 코드 fefcbd33644cff1978790aacd47ae353dd3c3fc8의 웹 수학 7개, Android 호스트 9개 및 빌드/lint, iOS XCTest 13개가 [이전 실행](https://github.com/playpark-admin/parkcaddy/actions/runs/36267925930)에서 통과했습니다. 2.1에서는 소유자 조회 방식도 관리자 전용 원자료 조회로 강화했습니다.

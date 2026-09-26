@@ -53,3 +53,5 @@ firebase deploy --only firestore:rules,hosting --project parkcaddy-ground-2026
 
 ## 원본 보존
 작업 폴더 backups/prototype-20260927-042941에 원본 웹·네이티브·실험 자료와 전체 Git 이력 번들을 보존했습니다. 원본 기준 fcff929ac1d9c91c5d4b52b8f5fa0d6a88c966d3, 태그 prototype-before-ground-v2-20260927. 기존 web/ 및 루트 GitHub Pages index.html은 보존되어 있으며 새 서비스는 ground/에서 배포합니다.
+
+삭제 요청은 서버에서 최소 ID 삭제표식 저장과 원자료 삭제를 원자 처리합니다. 이후 같은 ID의 지연 업로드는 거부합니다. 삭제표식에는 사진·위치·측정 수치를 남기지 않습니다.

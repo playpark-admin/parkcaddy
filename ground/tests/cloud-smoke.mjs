@@ -47,6 +47,63 @@ try {
       owner,
       db,
       nativeRef;
+    const restNativeIds = new Set();
+    const documentPrefix =
+      "projects/" + firebaseConfig.projectId + "/databases/(default)/documents";
+    const restBase = "https://firestore.googleapis.com/v1/" + documentPrefix;
+    const nativeDocument = (recordId) =>
+      documentPrefix + "/users/" + owner.uid + "/measurements/" + recordId;
+    const nativeMarkerDocument = (recordId) =>
+      documentPrefix +
+      "/users/" +
+      owner.uid +
+      "/measurementDeletions/" +
+      recordId;
+    const restPost = async (url, body) => {
+      // Token stays only in browser memory / Authorization header, never URLs or logs.
+      const token = await owner.getIdToken();
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer " + token,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+      await response.text();
+      return response.status;
+    };
+    const restFields = (platform) => ({
+      schemaVersion: { integerValue: "1" },
+      platform: { stringValue: platform },
+      createdAt: { stringValue: new Date().toISOString() },
+      consentVersion: { stringValue: "2026-09-27-native-v1" },
+      metadata: {
+        mapValue: {
+          fields: {
+            accuracyValidated: { booleanValue: false },
+            measurementKind: { stringValue: "synthetic-rest-test" },
+            points: { arrayValue: { values: [] } },
+          },
+        },
+      },
+    });
+    const removeRestNative = async (recordId) => {
+      const status = await restPost(restBase + ":commit", {
+        writes: [
+          {
+            update: {
+              name: nativeMarkerDocument(recordId),
+              fields: { deleted: { booleanValue: true } },
+            },
+          },
+          { delete: nativeDocument(recordId) },
+        ],
+      });
+      if (status !== 200)
+        throw new Error("Synthetic REST atomic cleanup failed: HTTP " + status);
+      return status;
+    };
     const collector = createCollector({
       store: {
         list: storage.listRecords,
@@ -218,6 +275,42 @@ try {
         ),
       );
       nativeRef = null;
+
+      // Exercise the actual native transport contracts, independently of SDK setDoc.
+      const androidId = id + "-android-rest";
+      const iosId = id + "-ios-rest";
+      const androidBody = {
+        writes: [
+          {
+            update: {
+              name: nativeDocument(androidId),
+              fields: restFields("android"),
+            },
+          },
+        ],
+      };
+      const iosBody = { fields: restFields("ios") };
+      const iosUrl =
+        restBase +
+        "/users/" +
+        encodeURIComponent(owner.uid) +
+        "/measurements?documentId=" +
+        encodeURIComponent(iosId);
+      restNativeIds.add(androidId); // Retain cleanup ownership before a request can leave.
+      const androidStatus = await restPost(restBase + ":commit", androidBody);
+      if (androidStatus !== 200)
+        throw new Error("Android REST commit failed: HTTP " + androidStatus);
+      restNativeIds.add(iosId);
+      const iosStatus = await restPost(iosUrl, iosBody);
+      if (iosStatus !== 200)
+        throw new Error("iOS REST createDocument failed: HTTP " + iosStatus);
+      const restAndroidCreated = androidStatus === 200;
+      const restIosCreated = iosStatus === 200;
+      await removeRestNative(androidId);
+      await removeRestNative(iosId);
+      const lateAndroidRestDenied =
+        (await restPost(restBase + ":commit", androidBody)) === 403;
+      const lateIosRestDenied = (await restPost(iosUrl, iosBody)) === 403;
       return {
         beforeConsentLocalOnly: !before.ownerUid,
         ownerReadDenied,
@@ -236,6 +329,10 @@ try {
         markerPayloadDenied,
         nativeMarkerDeleteDenied,
         crossUserMarkerWriteDenied,
+        restAndroidCreated,
+        restIosCreated,
+        lateAndroidRestDenied,
+        lateIosRestDenied,
       };
     } finally {
       // Every created item is synthetic. Cleanup must succeed before dropping its auth handle.
@@ -248,6 +345,9 @@ try {
         batch.delete(nativeRef);
         await batch.commit();
       }
+      // Retry cleanup for every REST ID, even after a lost acknowledgement or
+      // an unexpectedly accepted late write. Drop auth only after all succeed.
+      for (const recordId of restNativeIds) await removeRestNative(recordId);
       // Content-free { deleted: true } receipts intentionally remain under
       // synthetic account IDs; they prevent delayed writes from recreating data.
       for (const record of await storage.listRecords())
@@ -274,9 +374,13 @@ try {
     markerPayloadDenied: true,
     nativeMarkerDeleteDenied: true,
     crossUserMarkerWriteDenied: true,
+    restAndroidCreated: true,
+    restIosCreated: true,
+    lateAndroidRestDenied: true,
+    lateIosRestDenied: true,
   });
   console.log(
-    "PASS live Firebase: first consent, automatic private collection, owner/cross-user raw reads denied, cross-user mutations denied, native payload/replay accepted, false verified claims denied, atomic deletion receipts, late writes denied, revoke/delete and synthetic account cleanup (content-free receipts retained)",
+    "PASS live Firebase: first consent, automatic private collection, owner/cross-user raw reads denied, cross-user mutations denied, native SDK and Android REST commit/iOS REST createDocument accepted, false verified claims denied, atomic deletion receipts, late writes denied, revoke/delete and synthetic account cleanup (content-free receipts retained)",
   );
 } finally {
   await context.close();

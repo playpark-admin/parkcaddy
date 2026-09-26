@@ -409,7 +409,7 @@ async function capture(source, fromFile = false) {
   } catch (e) {
     notice(
       e.name === "QuotaExceededError"
-        ? "저장 공간이 부족해요. 설정에서 저장 데이터를 정리해 주세요."
+        ? "저장 공간이 부족해요. 기기 저장 공간을 확인해 주세요."
         : e.message,
     );
   } finally {
