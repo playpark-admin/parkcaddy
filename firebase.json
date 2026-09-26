@@ -8,7 +8,8 @@
       "tests/**",
       "package.json",
       "server.mjs",
-      "README.md"
+      "README.md",
+      "downloads/**"
     ],
     "headers": [
       {
