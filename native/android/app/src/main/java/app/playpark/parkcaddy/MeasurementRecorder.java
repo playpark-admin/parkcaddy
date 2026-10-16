@@ -17,15 +17,17 @@ final class MeasurementRecorder implements AutoCloseable {
  private volatile long bytes;
  private volatile String problem="";
  volatile boolean enabled=true;
- private BufferedWriter writer;
+ private BufferedWriter writer; private String metadataLine; private boolean metadataWritten;
  interface Completion {void done(String error);}
- MeasurementRecorder(File directory,String metadata){
+ MeasurementRecorder(File directory,String metadata){this(directory,metadata,true);}
+ MeasurementRecorder(File directory,String metadata,boolean initiallyEnabled){
+  enabled=initiallyEnabled;
   this.directory=directory;file=new File(directory,"run-"+System.currentTimeMillis()+"-"+run+".jsonl");
   submit(()->{
    try{
     if(!directory.isDirectory()&&!directory.mkdirs())throw new IOException("Cannot create recording directory");
     for(File f:files())bytes+=f.length();
-    append(json("type","metadata","schema",1,"run",run,"epoch_ms",System.currentTimeMillis(),"details",new Raw(metadata)));
+    metadataLine=json("type","metadata","schema",1,"run",run,"epoch_ms",System.currentTimeMillis(),"details",new Raw(metadata));if(initiallyEnabled)append(metadataLine);
    }catch(IOException e){problem="저장 실패: "+e.getClass().getSimpleName();}
   });
  }
@@ -41,6 +43,7 @@ final class MeasurementRecorder implements AutoCloseable {
   if(files==null)return new File[0];Arrays.sort(files,Comparator.comparing(File::getName));return files;
  }
  private void append(String line)throws IOException{
+  if(!metadataWritten){metadataWritten=true;if(!line.equals(metadataLine))append(metadataLine);}
   long size=line.getBytes(StandardCharsets.UTF_8).length+1;
   if(bytes+size>LIMIT){problem="100 MB 한도: 기록 중지 · 다운로드 후 보관하세요";return;}
   if(writer==null)writer=new BufferedWriter(new OutputStreamWriter(new FileOutputStream(file,true),StandardCharsets.UTF_8));

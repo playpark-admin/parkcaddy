@@ -18,7 +18,7 @@ public final class RecorderCheck {
   r.event("reset",1,"{}");r.enabled=false;r.event("must_not_record",1,"{}");
   byte[] zip=export(r);int runs=0;String contents="";
   try(ZipInputStream in=new ZipInputStream(new ByteArrayInputStream(zip))){
-   ZipEntry e;while((e=in.getNextEntry())!=null){ByteArrayOutputStream b=new ByteArrayOutputStream();in.transferTo(b);if(e.getName().endsWith(".jsonl")){runs++;contents=b.toString("UTF-8");}}
+   ZipEntry e;while((e=in.getNextEntry())!=null){ByteArrayOutputStream b=new ByteArrayOutputStream();byte[] buffer=new byte[4096];int n;while((n=in.read(buffer))!=-1)b.write(buffer,0,n);if(e.getName().endsWith(".jsonl")){runs++;contents=b.toString("UTF-8");}}
   }
   check(runs==1,"one run");check(contents.contains("\"height\":-0.14"),"signed height");
   check(contents.contains("\"not_finite\":null"),"nonfinite JSON");check(!contents.contains("must_not_record"),"pause");

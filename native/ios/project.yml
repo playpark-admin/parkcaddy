@@ -10,7 +10,34 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.playpark.parkcaddy
-        INFOPLIST_KEY_NSCameraUsageDescription: "파크골프 지면의 거리와 상대 굴곡을 측정하기 위해 카메라가 필요합니다."
-        INFOPLIST_KEY_UIRequiredDeviceCapabilities: arkit
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_NSCameraUsageDescription: "파크골프 지면의 사진을 기록하고 거리와 상대 높낮이를 측정하기 위해 카메라가 필요합니다."
+        INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: "동의한 사진에 구장을 찾기 위한 위치를 함께 기록합니다. GPS로 지면 높낮이를 계산하지 않습니다."
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
         SWIFT_VERSION: "5.0"
-    frameworks: [ARKit.framework, SceneKit.framework]
+        TARGETED_DEVICE_FAMILY: "1,2"
+    dependencies:
+      - sdk: ARKit.framework
+      - sdk: SceneKit.framework
+      - sdk: CoreLocation.framework
+      - sdk: AVFoundation.framework
+  ParkCaddyARTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources: [Tests]
+    dependencies:
+      - target: ParkCaddyAR
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "5.0"
+schemes:
+  ParkCaddyAR:
+    build:
+      targets:
+        ParkCaddyAR: all
+        ParkCaddyARTests: [test]
+    test:
+      targets:
+        - ParkCaddyARTests

@@ -1,3 +1,5 @@
+> Historical implementation notes. For current v2 behavior and validation status, see [GROUND-V2.md](GROUND-V2.md).
+
 # ParkCaddy Android implementation and validation
 
 ## Fixed defects

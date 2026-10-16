@@ -1,0 +1,10 @@
+.tooling/
+.host-tests/
+.gradle/
+**/build/
+build-logs/
+local.properties
+*.jks
+*.keystore
+.idea/
+*.iml
