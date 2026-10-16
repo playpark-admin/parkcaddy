@@ -18,6 +18,8 @@ import com.google.ar.core.*;
 public final class MainActivity extends AppCompatActivity {
   private GLSurfaceView surface;
   private TerrainHudView hud;
+  private GuideOverlayView guideOverlay;
+  private ScanTrace scanTrace;
   private TextView status, recordInfo, debugInfo, referenceInfo, cloudInfo;
   private NativeCloudSync cloud;
   private boolean consentDialogVisible;
@@ -31,6 +33,7 @@ public final class MainActivity extends AppCompatActivity {
   private ProgressBar scanBar;
   private long availabilityStarted;
   private long lastUi;
+  private volatile long uiEpoch;
   private String fullGuidance = "발 앞 지면을 약 2초 비춘 뒤, 같은 지면을 보며 폰을 천천히 좌우로 움직이세요.";
 
   private final ActivityResultLauncher<String> permission = registerForActivityResult(
@@ -74,6 +77,8 @@ public final class MainActivity extends AppCompatActivity {
         MeasurementRecorder.json("app_version", version, "device_model", android.os.Build.MODEL,
             "android_sdk", android.os.Build.VERSION.SDK_INT, "arcore_sdk", "1.48.0",
             "policy", new MeasurementRecorder.Raw(policy.metadata())), preferences.getBoolean("recording", false));
+    scanTrace = new ScanTrace((type, payload) -> recorder.event(type, -1, payload));
+    guideOverlay = new GuideOverlayView(this);
     surface = new GLSurfaceView(this);
     surface.setEGLContextClientVersion(2);
     hud = new TerrainHudView(this);
@@ -82,18 +87,22 @@ public final class MainActivity extends AppCompatActivity {
     hud.reference = preferences.getBoolean("reference", false);
     hud.largeLabels = preferences.getBoolean("large_labels", true);
     status = overlayLabel("발 앞 지면을 비춰 주세요", 18);
-    status.setMaxLines(3);
+    status.setMaxLines(5);
     status.setGravity(Gravity.CENTER_VERTICAL);
     status.setEllipsize(android.text.TextUtils.TruncateAt.END);
     renderer = new ArCameraRenderer((scene, message, progress) -> {
       long now = android.os.SystemClock.elapsedRealtime();
       if (now - lastUi < 150) return;
       lastUi = now;
+      final ScanGuide.State guide = renderer.guideState;
+      final long epoch = uiEpoch;
+      final long frameEpoch = renderer.frameGeneration;
       runOnUiThread(() -> {
-        if (isDestroyed() || !active) return;
-        hud.setScene(scene);
+        if (isDestroyed() || !active || epoch != uiEpoch || frameEpoch != renderer.generation()) return;
+        hud.setScene(guide != null && !guide.showReadings
+            ? new TerrainHudView.Scene(new java.util.ArrayList<>()) : scene);
         fullGuidance=message;
-        showScan(progress);
+        showScan(progress, guide);
         if (recordInfo != null && !exporting) recordInfo.setText(recorder.status());
         if (debugInfo != null) debugInfo.setText(renderer.debugInfo);
         if (referenceInfo != null) referenceInfo.setText(renderer.referenceInfo);
@@ -108,6 +117,7 @@ public final class MainActivity extends AppCompatActivity {
     surface.onPause();
     root.addView(surface, new FrameLayout.LayoutParams(-1, -1));
     root.addView(hud, new FrameLayout.LayoutParams(-1, -1));
+    root.addView(guideOverlay, new FrameLayout.LayoutParams(-1, -1));
 
     FrameLayout controls = new FrameLayout(this);
     root.addView(controls, new FrameLayout.LayoutParams(-1, -1));
@@ -142,6 +152,7 @@ public final class MainActivity extends AppCompatActivity {
     controls.addView(bottom, bottomParams);
     bottom.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob) -> {
       hud.bottomInset = bottom.getHeight() + controls.getPaddingBottom() + dp(20);
+      guideOverlay.bottomInset = hud.bottomInset; guideOverlay.invalidate();
       hud.invalidate();
     });
     androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(controls, (view, insets) -> {
@@ -149,6 +160,8 @@ public final class MainActivity extends AppCompatActivity {
       view.setPadding(safe.left, safe.top, safe.right, safe.bottom);
       hud.topInset = safe.top + dp(64);
       hud.bottomInset = bottom.getHeight() + safe.bottom + dp(20);
+      guideOverlay.topInset = hud.topInset; guideOverlay.bottomInset = hud.bottomInset;
+      guideOverlay.invalidate();
       hud.invalidate();
       return insets;
     });
@@ -159,8 +172,15 @@ public final class MainActivity extends AppCompatActivity {
     fullGuidance=message;
     showScan(ScanProgress.waiting("지면 자동 스캔",message,0));
   }
-  private void showScan(ScanProgress progress) {
-    String text=progress.title+"\n"+progress.detail;
+  private void showScan(ScanProgress progress) { showScan(progress, null); }
+  private void showScan(ScanProgress progress, ScanGuide.State guide) {
+    if(guideOverlay != null) guideOverlay.setGuide(guide);
+    if(scanTrace != null && recorder != null) scanTrace.update(
+        guide == null ? "SYSTEM_"+progress.stage.name() : guide.phase.name(),
+        guide == null ? progress.stage.name().toLowerCase(java.util.Locale.ROOT) : guide.reason,
+        guide != null && guide.phase == ScanGuide.Phase.SHOWING,
+        android.os.SystemClock.elapsedRealtime(), recorder.enabled);
+    String text=guide == null ? progress.title+"\n"+progress.detail : guide.title+"\n"+guide.detail;
     fullGuidance=text;
     if(!android.text.TextUtils.equals(status.getText(),text))status.setText(text);
     status.setContentDescription(text);
@@ -208,7 +228,10 @@ public final class MainActivity extends AppCompatActivity {
       int range = id == 3 ? 3 : 6;
       preferences.edit().putInt("range_m", range).apply();
       renderer.rangeMeters = range;
-      resetMeasurement();
+      hud.resetLabels();
+      recorder.event("view_range_changed", -1, MeasurementRecorder.json(
+          "range_m", range, "reference_reset", false,
+          "elapsed_ms", android.os.SystemClock.elapsedRealtime()));
     });
     heading(content, "관측 필터");
     addToggle(content, "엄격한 관측 필터", "strict", policy.strict, on -> {
@@ -232,6 +255,7 @@ public final class MainActivity extends AppCompatActivity {
     content.addView(label("점선 참고 평면은 높이를 측정한 결과가 아닙니다. 빈 곳은 미측정 위치입니다. 3초 이상 갱신되지 않은 높이나 추적을 잃은 상태의 측정값은 숨깁니다.", 17));
     heading(content, "사용 방법");
     content.addView(label("① 멈춰 서서 발 앞 지면을 비추면 자동으로 스캔합니다.\n② 같은 지면을 보며 폰을 좌우 10–20 cm 천천히 움직이면 관측을 보정하고 안정된 격자부터 높이·거리를 자동 표시합니다. 회전만 하지 않습니다.\n③ 지면을 살펴본 뒤 닫기를 누릅니다. 현재 배포판에서는 지면 확인 화면을 종료합니다.", 18));
+    content.addView(label("\ubc1c\ub05d \uadf8\ub9bc\uc740 \uad6c\ub3c4 \uc548\ub0b4\uc6a9\uc785\ub2c8\ub2e4. \ubc1c \uc778\uc2dd\uc744 \uc694\uad6c\ud558\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4. \uae30\uc900 \ud655\uc778 \ud6c4 \uce74\uba54\ub77c\uc758 \uc2dc\uc120\uc744 \uc55e\ucabd \uc9c0\uba74\uc73c\ub85c \uc62e\uae30\uc138\uc694. \uc774\ud6c4\uc5d0\ub294 \ubc1c\ub05d\uc774 \ubcf4\uc774\uc9c0 \uc54a\uc544\ub3c4 \uc815\uc0c1\uc785\ub2c8\ub2e4.", 18));
     heading(content, "현재 안내");
     content.addView(label(fullGuidance, 18));
     panel("화면과 안내", content, true);
@@ -258,6 +282,7 @@ public final class MainActivity extends AppCompatActivity {
     });
     content.addView(label("동의를 끄면 새 전송을 중지하고 전송 대기 자료를 취소합니다. 삭제 요청은 이 기기에서 제공한 자료 전체에 적용하며 연결될 때 재시도합니다. 삭제 완료를 확인하기 전 앱을 삭제하거나 앱 데이터를 지우면 삭제에 필요한 권한을 잃을 수 있습니다.",17));
     heading(content, "기기 내 진단 저장 · 별도 선택");
+    content.addView(label("\uc120\ud0dd \uc800\uc7a5: \ub2e8\uacc4\ubcc4 \ub300\uae30 \uc2dc\uac04, \uc911\ub2e8\u00b7\uc2e4\ud328 \uc0ac\uc720, \uccab \uaca9\uc790 \ud45c\uc2dc \uc2dc\uac04\ub3c4 \uc774 \uae30\uae30\uc5d0\ub9cc \uc800\uc7a5\ud569\ub2c8\ub2e4. GPS\ub098 \uc601\uc0c1 \uc218\uc9d1\uc740 \ucd94\uac00\ud558\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4.", 17));
     addToggle(content, "진단 기록 저장", "recording", recorder.enabled, on -> {
       if (!on) recorder.event("recording_paused", -1, "{}");
       recorder.enabled = on;
@@ -291,7 +316,7 @@ public final class MainActivity extends AppCompatActivity {
     heading(content, "좌표와 계산 모델");
     content.addView(label("ARCore Raw Depth d(mm)를 m로 바꾸고 카메라 내부 파라미터로 역투영합니다.\n\nx = (u − cx) × d / fx\ny = −(v − cy) × d / fy\nz = −d\np기준 = T기준⁻¹ × T카메라 × p카메라\n수평거리 = √(x기준² + z기준²)\n상대 높이 = y기준 (기준 지면 0 cm)\n\nu·v·cx·cy·fx·fy는 픽셀 단위입니다. 깊이는 광학축 방향 거리이며 사선 거리가 아닙니다. GPS 고도나 사용자 키로 거리를 환산하지 않습니다.", 18));
     heading(content, "반복 관측과 채택 조건");
-    content.addView(label("새 Raw Depth 시점만 집계하며 약 180 ms 이상 간격으로 처리합니다. 같은 격자의 최근 최대 9개 관측에서 7회 이상·1.2초 이상·카메라 이동폭 8 cm 이상을 요구합니다. 중앙절대편차(MAD) ≤ 2.5 cm, 양 끝 관측을 제외한 높이 범위 ≤ 8 cm인 경우 값을 채택합니다.\n\n실시간 MAD는 안정 격자의 반복성 통계입니다. 0~255 신뢰도는 센서 입력값이며 정확도 확률이나 95% 신뢰구간이 아닙니다. ‘최대 이동폭’도 지면 측량 오차가 아닙니다.", 18));
+    content.addView(label("새 Raw Depth 시점만 집계하며 약 180 ms 이상 간격으로 처리합니다. 같은 격자의 최근 5초 이내 관측(최대 64개)과 최근 9개 관측을 함께 검사하며 7회 이상·1.2초 이상·카메라 이동폭 8 cm 이상을 요구합니다. 중앙절대편차(MAD) ≤ 2.5 cm, 양 끝 관측을 제외한 높이 범위 ≤ 8 cm인 경우 값을 채택합니다.\n\n실시간 MAD는 안정 격자의 반복성 통계입니다. 0~255 신뢰도는 센서 입력값이며 정확도 확률이나 95% 신뢰구간이 아닙니다. ‘최대 이동폭’도 지면 측량 오차가 아닙니다.", 18));
     heading(content, "불확실성과 물리적 한계");
     content.addView(label("반복 촬영은 일부 흔들림과 이상값을 줄입니다. 시간적으로 인접한 프레임의 오차는 상관될 수 있으므로 촬영 횟수만으로 1/√N 개선을 주장할 수 없습니다. 센서 깊이 편향·기준 평면 오류·카메라 자세 드리프트·잔디 윗면 편향은 따로 남습니다.\n\n작은 각도에서 자세 기울기 오차 δθ(rad)가 높이에 미치는 크기는 대략 r × δθ(m)입니다. 이 식에는 실제 각도 오차를 대입해야 하며, 현재 앱은 그 오차를 측정하지 않으므로 정확도 상한을 계산하지 않습니다.\n\n0.25 m 격자 반올림으로 수평 위치는 최대 약 17.7 cm 이동할 수 있습니다. cm 표시는 cm 정확도 보증이 아닙니다. 알려진 거리·높이와 비교하여 편향, MAE, RMSE, 95백분위 오차와 결측률을 평가해야 합니다.", 18));
     heading(content, "다중 사용자 데이터");
@@ -350,7 +375,10 @@ public final class MainActivity extends AppCompatActivity {
     return dialog;
   }
   private void resetMeasurement() {
-    renderer.resetRequested = true; hud.resetLabels();
+    uiEpoch++;
+    if(scanTrace != null) scanTrace.finish("reset_requested",
+        android.os.SystemClock.elapsedRealtime(), recorder.enabled);
+    renderer.requestReset(); hud.resetLabels();
     hud.setScene(new TerrainHudView.Scene(new java.util.ArrayList<>()));
     setGuidance("발 앞 지면을 약 2초 비춰 주세요");
     if (!active) start();
@@ -412,10 +440,21 @@ public final class MainActivity extends AppCompatActivity {
         Config config = new Config(candidate); config.setDepthMode(Config.DepthMode.AUTOMATIC); config.setFocusMode(Config.FocusMode.AUTO); config.setPlaneFindingMode(Config.PlaneFindingMode.HORIZONTAL);
         candidate.configure(config); session = candidate;
       }
-      session.resume(); renderer.session = session; renderer.rotation = getWindowManager().getDefaultDisplay().getRotation(); surface.onResume(); active = true;
+      session.resume(); renderer.requestResume(); renderer.session = session; renderer.rotation = getWindowManager().getDefaultDisplay().getRotation(); surface.onResume(); active = true;
       if(!cloud.decided())requestCloudConsent(null);
     } catch (Exception error) { android.util.Log.e("ParkCaddy", "Start", error); showScan(ScanProgress.blocked("다른 카메라 앱을 닫은 뒤 앱을 다시 열어 주세요 · "+error.getClass().getSimpleName())); }
   }
-  @Override protected void onPause() { if(renderer!=null)renderer.resetRequested=true; if(hud!=null)hud.setScene(new TerrainHudView.Scene(new java.util.ArrayList<>())); if(cloud!=null)cloud.foreground(false); if (surface != null) surface.onPause(); if (session != null) session.pause(); active = false; super.onPause(); }
+  @Override protected void onPause() {
+    uiEpoch++;
+    long now = android.os.SystemClock.elapsedRealtime();
+    if(scanTrace != null && recorder != null) scanTrace.finish("paused", now, recorder.enabled);
+    if(renderer != null) renderer.requestPause(now);
+    if(guideOverlay != null) guideOverlay.setGuide(null);
+    if(hud != null) hud.setScene(new TerrainHudView.Scene(new java.util.ArrayList<>()));
+    if(cloud != null) cloud.foreground(false);
+    if(surface != null) surface.onPause();
+    if(session != null) session.pause();
+    active = false; super.onPause();
+  }
   @Override protected void onDestroy() { if (renderer != null) renderer.session = null; if (recorder != null) recorder.close(); if (session != null) session.close(); super.onDestroy(); }
 }

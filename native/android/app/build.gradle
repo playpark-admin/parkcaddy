@@ -3,13 +3,25 @@ plugins { id 'com.android.application' }
 android {
     namespace 'app.playpark.parkcaddy'
     compileSdk 35
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    buildTypes {
+        debug {
+            // CI test build does not overwrite the user's installed app/data.
+            applicationIdSuffix '.guidedpreview'
+            versionNameSuffix '-test'
+        }
+    }
 
     defaultConfig {
         applicationId 'app.playpark.parkcaddy'
         minSdk 24
         targetSdk 35
-        versionCode 3
-        versionName '2.2.0-ground-preview'
+        versionCode 6
+        versionName '2.3.1-guided-preview'
     }
 }
 

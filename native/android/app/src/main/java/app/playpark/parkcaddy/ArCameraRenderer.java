@@ -7,6 +7,21 @@ import java.util.*;
 final class ArCameraRenderer implements GLSurfaceView.Renderer {
  interface Listener {void update(TerrainHudView.Scene scene,String message,ScanProgress progress);}
  private final Listener listener;
+ private final ScanGuide scanGuide = new ScanGuide();
+ volatile ScanGuide.State guideState;
+ private boolean guideCameraTracking;
+ private float guideDownDegrees = Float.NaN, guideBaseline;
+ private int forwardObservedCells;
+ private volatile boolean uiPaused, resumeRequested;
+ private volatile long uiGeneration;
+ volatile long frameGeneration;
+ long generation() { return uiGeneration; }
+ void requestReset() { uiGeneration++; resetRequested = true; }
+ private volatile long pausedAt = -1;
+ private float[] lastTrackedMapPosition;
+ void requestPause(long now) { uiPaused = true; uiGeneration++; pausedAt = now; }
+ void requestResume() { if (pausedAt >= 0) resumeRequested = true; uiPaused = false; }
+
  volatile NativeCloudSync cloud; private final String cloudSession=UUID.randomUUID().toString();
  volatile MeasurementRecorder recorder;private int segment;private long lastTelemetry,lastStatusRecord;private String lastRecordedStatus="";
  volatile Session session; volatile int rotation; volatile boolean resetRequested; volatile int rangeMeters=6;
@@ -42,17 +57,27 @@ final class ArCameraRenderer implements GLSurfaceView.Renderer {
  private static int shader(int type,String source){int s=GLES20.glCreateShader(type);GLES20.glShaderSource(s,source);GLES20.glCompileShader(s);int[] ok=new int[1];GLES20.glGetShaderiv(s,GLES20.GL_COMPILE_STATUS,ok,0);if(ok[0]==0)throw new IllegalStateException(GLES20.glGetShaderInfoLog(s));return s;}
  public void onSurfaceChanged(javax.microedition.khronos.opengles.GL10 gl,int w,int h){width=w;height=h;GLES20.glViewport(0,0,w,h);}
  public void onDrawFrame(javax.microedition.khronos.opengles.GL10 gl){
- GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);Session s=session;if(s==null||width==0)return;
+ GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);Session s=session;if(s==null||width==0||uiPaused)return;
+ frameGeneration = uiGeneration;
  try{
  MeasurementPolicy changed=takePolicy();
  if(changed!=null){policy=changed;resetRequested=true;}
- if(resetRequested){segment++;record("reset",MeasurementRecorder.json("elapsed_ms",android.os.SystemClock.elapsedRealtime()));if(anchor!=null)anchor.detach();anchor=null;cells.clear();reference.clear();referencePlane=null;lastDepth=lastDepthAt=lastDebug=lastUsableDepthAt=lastReferenceFrame=0;validDepthFrames=0;scanWaitPhase="";depthWidth=depthHeight=confidencePassed=confidenceRejected=usablePixels=frameRejected=0;depthFx=depthFy=cameraMapX=cameraMapY=cameraMapZ=0;depthStatus="기준점 재설정 · 깊이 대기";record("measurement_policy",policy.metadata());resetRequested=false;}
+ if(resetRequested){resetState(android.os.SystemClock.elapsedRealtime(), "requested");resetRequested=false;}
+ guideCameraTracking = false; guideDownDegrees = Float.NaN;
+ forwardObservedCells = 0; guideBaseline = 0;
  s.setCameraTextureName(texture);s.setDisplayGeometry(rotation,width,height);Frame f=s.update();drawCamera(f);
+ guideCameraTracking = f.getCamera().getTrackingState() == TrackingState.TRACKING;
+ if (guideCameraTracking) {
+   float[] forward = f.getCamera().getPose().rotateVector(new float[]{0, 0, -1});
+   guideDownDegrees = ScanGuide.downwardDegrees(forward[0], forward[1], forward[2]);
+   checkResume(f, android.os.SystemClock.elapsedRealtime());
+ }
  if(f.getCamera().getTrackingState()!=TrackingState.TRACKING){invalidateTracking();reference.clear();empty(TrackingGuide.tracking(f.getCamera().getTrackingFailureReason().name()));return;}
  if(anchor==null)lock(f);
  if(anchor==null){long at=android.os.SystemClock.elapsedRealtime();empty(referenceMessage,referenceMessage.contains("기준 높이 조건")?ScanProgress.blocked("폰을 지면에서 0.4–2.3 m 높이로 들고 발 앞을 비춰 주세요"):ScanProgress.reference(reference.observationCount(at),waitElapsed("reference",at)));return;}
  if(anchor.getTrackingState()!=TrackingState.TRACKING){invalidateTracking();empty("격자 대기: 기존 기준점을 놓쳤습니다\n원래 지면을 다시 비추세요. 위치를 옮겼다면 현재 위치로 초기화하세요.");return;}
  long now=android.os.SystemClock.elapsedRealtime();
+ lastTrackedMapPosition = anchor.getPose().inverse().compose(f.getCamera().getPose()).getTranslation();
  if(lastUsableDepthAt>0&&!ScanProgress.fresh(lastUsableDepthAt,now))invalidateTracking();
  if(trackingInterrupted){trackingInterrupted=false;scanWaitPhase="";}
  if(now-lastSample>180&&f.getTimestamp()!=lastFrame){sample(f,now);lastSample=now;lastFrame=f.getTimestamp();}
@@ -81,10 +106,57 @@ final class ArCameraRenderer implements GLSurfaceView.Renderer {
  else if(measured==0) message="아직 높이를 측정하지 못했습니다\n같은 바닥을 보며 폰을 좌우 10~20 cm 천천히 움직이세요.";
  if(cells.values().stream().anyMatch(c->c.estimate.uncertain))message+="\n관측 불일치: 같은 격자를 다시 스캔하세요. 지속되면 초기화하세요.";
  
- updateDiagnostics(now);listener.update(new TerrainHudView.Scene(nodes),message,scanProgress(nodes,now));
+ updateDiagnostics(now);
+ ScanProgress progress = scanProgress(nodes,now);
+ publishGuide(progress, now);
+ listener.update(new TerrainHudView.Scene(nodes),message,progress);
 
- }catch(com.google.ar.core.exceptions.SessionPausedException ignored){}catch(Exception e){Log.e("ParkCaddy","AR frame",e);empty("측정 재시도 중 · "+e.getClass().getSimpleName());}
+ }catch(com.google.ar.core.exceptions.SessionPausedException ignored){}catch(Exception e){guideCameraTracking=false;Log.e("ParkCaddy","AR frame",e);empty("측정 재시도 중 · "+e.getClass().getSimpleName());}
  }
+
+ private void publishGuide(ScanProgress status, long now) {
+   guideState = scanGuide.update(status, guideCameraTracking, anchor != null,
+       anchor != null && anchor.getTrackingState() == TrackingState.TRACKING,
+       reference.observationCount(now), guideDownDegrees, forwardObservedCells,
+       guideBaseline, now);
+ }
+
+ private void resetState(long now, String reason) {
+   segment++;
+   record("reset", MeasurementRecorder.json("elapsed_ms", now, "reason", reason));
+   if(anchor != null) anchor.detach();
+   anchor = null; cells.clear(); reference.clear(); referencePlane = null;
+   lastDepth = lastDepthAt = lastDebug = lastUsableDepthAt = lastReferenceFrame = 0;
+   lastSample = lastFrame = 0; validDepthFrames = 0; scanWaitPhase = "";
+   depthWidth = depthHeight = confidencePassed = confidenceRejected = usablePixels = frameRejected = 0;
+   depthFx = depthFy = cameraMapX = cameraMapY = cameraMapZ = 0;
+   lastTrackedMapPosition = null; trackingInterrupted = false;
+   depthStatus = "\uae30\uc900\uc810 \uc7ac\uc124\uc815 \u00b7 \uae4a\uc774 \ub300\uae30";
+   scanGuide.reset(); guideState = null;
+   record("measurement_policy", policy.metadata());
+ }
+
+ private void checkResume(Frame frame, long now) {
+   if(!resumeRequested) return;
+   resumeRequested = false;
+   long elapsed = pausedAt < 0 ? -1 : now - pausedAt;
+   boolean keep = false;
+   if(anchor != null && anchor.getTrackingState() == TrackingState.TRACKING
+       && lastTrackedMapPosition != null) {
+     float[] current = anchor.getPose().inverse().compose(frame.getCamera().getPose()).getTranslation();
+     keep = ResumePolicy.mayKeepAnchor(elapsed, true, true,
+         current[0] - lastTrackedMapPosition[0], current[1] - lastTrackedMapPosition[1],
+         current[2] - lastTrackedMapPosition[2]);
+   }
+   pausedAt = -1;
+   if(keep) {
+     // Preserve only the anchor. All cells must earn NEW depth observations.
+     trackingInterrupted = false; invalidateTracking();
+     record("resume_revalidate", MeasurementRecorder.json("elapsed_ms",now,
+         "pause_ms",elapsed,"anchor_retained",true,"stored_cells_reused",false));
+   } else resetState(now, "resume_requires_new_reference");
+ }
+
  private void record(String type,String payload){MeasurementRecorder out=recorder;if(out!=null)out.event(type,segment,payload);}
  private long waitElapsed(String phase,long now){if(!phase.equals(scanWaitPhase)){scanWaitPhase=phase;scanWaitSince=now;}return Math.max(0,now-scanWaitSince);}
  private void invalidateTracking(){
@@ -99,15 +171,18 @@ final class ArCameraRenderer implements GLSurfaceView.Renderer {
    Cell cell=cells.get(node.ix+":"+node.iz);
    if(cell==null||!ScanProgress.fresh(cell.estimate.lastObservation,now))continue;
    candidates++;if(node.known)stable++;
+    if(Math.abs(node.x)<=.65f&&node.y>=-.45f&&node.y<=.65f&&node.cameraMeters>=.6f)
+      forwardObservedCells++;
    if(best==null||cell.estimate.observationCount()>best.observationCount()||(cell.estimate.observationCount()==best.observationCount()&&cell.estimate.lastBaseline>best.lastBaseline))best=cell.estimate;
   }
-  boolean freshDepth=ScanProgress.fresh(lastUsableDepthAt,now);
+  guideBaseline = best == null ? 0 : best.lastBaseline;
+   boolean freshDepth=ScanProgress.fresh(lastUsableDepthAt,now);
   long wait=waitElapsed(stable>0?"showing":!freshDepth||candidates==0?"depth":"measure",now);
   return ScanProgress.measuring(validDepthFrames,candidates,stable,best==null?0:best.observationCount(),
     best==null?0:best.lastBaseline,best==null?0:best.observationDurationMs(),best==null?"":best.decision,freshDepth,wait);
  }
  private void empty(String m){long now=android.os.SystemClock.elapsedRealtime();String[] lines=m.split("\\n",2);empty(m,ScanProgress.waiting(lines[0],lines.length>1?lines[1]:"밝은 지면의 무늬를 천천히 비춰 주세요",waitElapsed("tracking:"+m,now)));}
- private void empty(String m,ScanProgress progress){referenceInfo="현재 기준 높이를 확인할 수 없습니다.\n"+m;debugInfo="추적 / 기준점 상태\n"+m+"\n현재 수치를 표시하지 않습니다.\n"+policyText();long now=android.os.SystemClock.elapsedRealtime();if(!m.equals(lastRecordedStatus)||now-lastStatusRecord>3000){record("status",MeasurementRecorder.json("elapsed_ms",now,"message",m,"range_m",rangeMeters));lastRecordedStatus=m;lastStatusRecord=now;}listener.update(new TerrainHudView.Scene(new ArrayList<>()),m,progress);}
+ private void empty(String m,ScanProgress progress){referenceInfo="현재 기준 높이를 확인할 수 없습니다.\n"+m;debugInfo="추적 / 기준점 상태\n"+m+"\n현재 수치를 표시하지 않습니다.\n"+policyText();long now=android.os.SystemClock.elapsedRealtime();if(!m.equals(lastRecordedStatus)||now-lastStatusRecord>3000){record("status",MeasurementRecorder.json("elapsed_ms",now,"message",m,"range_m",rangeMeters));lastRecordedStatus=m;lastStatusRecord=now;}publishGuide(progress, now);listener.update(new TerrainHudView.Scene(new ArrayList<>()),m,progress);}
  private void drawCamera(Frame f){
  if(f.getTimestamp()==0)return;
  quad.rewind();uv.rewind();f.transformCoordinates2d(Coordinates2d.OPENGL_NORMALIZED_DEVICE_COORDINATES,quad,Coordinates2d.TEXTURE_NORMALIZED,uv);quad.rewind();uv.rewind();GLES20.glUseProgram(program);
@@ -130,7 +205,7 @@ final class ArCameraRenderer implements GLSurfaceView.Renderer {
  if(referencePlane!=null&&referencePlane.getSubsumedBy()!=null)referencePlane=referencePlane.getSubsumedBy();
  // ARCore may return a new Java wrapper for the SAME logical plane each frame.
  if(!p.equals(referencePlane)){reference.clear();referencePlane=p;}
- referenceMessage="바닥 후보 인식 · 기준 높이를 안정화하는 중\n같은 바닥을 약 2초 유지해 주세요. 이후 폰을 좌우로 천천히 움직여 주세요.";
+ referenceMessage="바닥 후보 인식 · 기준 높이를 안정화하는 중\n같은 바닥을 약 2초 유지해 주세요. 같은 지면을 보며 폰을 천천히 옆으로 옮겨 주세요.";
  if(reference.add(floor,android.os.SystemClock.elapsedRealtime())){
  anchor=session.createAnchor(Pose.makeTranslation(camera.tx(),reference.median(),camera.tz()));
  record("reference",MeasurementRecorder.json("pose",poseValues(anchor.getPose()),"frame_ns",f.getTimestamp()));

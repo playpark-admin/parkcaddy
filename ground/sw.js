@@ -1,4 +1,4 @@
-const CACHE = "parkcaddy-ground-v2-3",
+const CACHE = "parkcaddy-ground-v2-4-guided-v6",
   SHELL = [
     "./",
     "./index.html",

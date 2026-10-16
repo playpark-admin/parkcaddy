@@ -1,8 +1,9 @@
-# ParkCaddy Ground 2.2
+# ParkCaddy Ground · Android 2.3.1 guided preview
 
 파크골프 지면을 확인하는 카메라 기능입니다. 현재 독립 실행으로 사용하며, 이후 스코어카드의 구장·코스·홀 정보와 연결할 예정입니다.
 
-- [서비스](https://parkcaddy-ground-2026.web.app) · [Android 측정 앱](https://parkcaddy-ground-2026.web.app/downloads/parkcaddy-ground-android.apk)
+- [서비스](https://parkcaddy-ground-2026.web.app) · [Android 현장테스트 2.3.1 (6)](https://parkcaddy-ground-2026.web.app/releases/parkcaddy-guided-preview-v6.apk)
+- 최신 Android 설치/현장 체크리스트: [인수 통합 안내](native/android/GUIDED-PREVIEW-20261016.md). 웹 측정 알고리즘은 기존 WebXR 구현이며 Android 변경이 자동 이식되는 것은 아닙니다.
 - [관리자 Firestore](https://console.firebase.google.com/project/parkcaddy-ground-2026/firestore)
 - 형상관리: `feature/ground-v2` · [PR #1](https://github.com/playpark-admin/parkcaddy/pull/1)
 - [개발 단계](docs/ROADMAP.md) · [정밀도 근거](docs/MEASUREMENT-ACCURACY.md) · [검증 기록](docs/VALIDATION.md) · [웹 구현 안내](ground/README.md)

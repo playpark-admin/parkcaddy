@@ -61,20 +61,20 @@ jobs:
           # v16 is included in the upstream Ubuntu 24.04 / JDK 17 test matrix.
           cmdline-tools-version: '12266719'
           log-accepted-android-sdk-licenses: 'false'
-          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+          packages: 'platform-tools platforms;android-35 build-tools;34.0.0'
       - name: Verify Android SDK installation
         run: |
           java -version
           command -v sdkmanager
           test -n "$ANDROID_HOME"
           test -f "$ANDROID_HOME/platforms/android-35/android.jar"
-          test -x "$ANDROID_HOME/build-tools/35.0.0/aapt2"
+          test -x "$ANDROID_HOME/build-tools/34.0.0/aapt2"
       - name: Run framework-independent Java checks
         run: |
           output="$RUNNER_TEMP/parkcaddy-host-tests"
           mkdir -p "$output"
           source_root="app/src/main/java/app/playpark/parkcaddy"
-          names=(ScanProgress CloudRecordQueue DepthGeometry GridDisplayPolicy MeasurementPolicy MeasurementRecorder RangePolicy ReferenceWindow StableHeight StickyLabels TerrainMath TrackingGuide)
+          names=(ScanProgress CloudRecordQueue DepthGeometry GridDisplayPolicy MeasurementPolicy MeasurementRecorder RangePolicy ReferenceWindow StableHeight StickyLabels TerrainMath TrackingGuide ScanGuide ScanTrace ResumePolicy)
           sources=()
           for name in "${names[@]}"; do
             sources+=("$source_root/$name.java")

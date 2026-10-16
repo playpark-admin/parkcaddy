@@ -2,7 +2,7 @@ package app.playpark.parkcaddy;
 
 /** Input gates describe repeatability, never a calibrated accuracy probability. */
 final class MeasurementPolicy {
-  static final String ALGORITHM = "stable-raw-v2-near";
+  static final String ALGORITHM = "stable-raw-v3.1-guided-preview";
   final boolean strict;
   final int confidenceMin;
   final float frameSpreadMaxMeters;
@@ -30,6 +30,7 @@ final class MeasurementPolicy {
         "depth_max_m", depthMaxMeters, "temporal_min_samples", 7,
         "temporal_min_duration_ms", 1200, "temporal_min_baseline_m", .08,
         "temporal_mad_max_m", .025, "grid_unit_m", .25,
-        "accuracy_validated", false);
+        "temporal_window_ms", 5000, "temporal_max_samples", 64,
+        "recent_window_samples", 9, "recent_crosscheck", true, "expired_window_revalidation", true, "accuracy_validated", false);
   }
 }
