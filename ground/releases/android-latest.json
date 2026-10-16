@@ -2,7 +2,7 @@
   "applicationId": "app.playpark.parkcaddy.guidedpreview",
   "versionName": "2.3.1-guided-preview-test",
   "versionCode": 6,
-  "apk": "/releases/parkcaddy-guided-preview-v6.apk",
+  "apk": "https://github.com/playpark-admin/parkcaddy/releases/download/guided-preview-v6/parkcaddy-guided-preview-v6.apk",
   "sha256": "21112138e065681f10d660fed15b802a544ce9008a2fe10fb9f6145ab595e7b3",
   "buildAndLint": "passed",
   "deviceAndFieldValidation": "not_run",

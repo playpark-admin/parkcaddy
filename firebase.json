@@ -9,7 +9,8 @@
       "package.json",
       "server.mjs",
       "README.md",
-      "downloads/**"
+      "downloads/**",
+      "**/*.apk"
     ],
     "headers": [
       {
